@@ -13,7 +13,8 @@ export default function Home() {
       {/* Header */}
       <header className="p-6 flex justify-between items-center">
         <div className="flex items-center space-x-4">
-          <h1 className="text-3xl font-bold text-white">🍣 MayfieldSwap DEX</h1>
+          <h1 className="text-3xl font-bold text-white">MayfieldSwap</h1>
+          <span className="text-white/60 text-sm">V4 concentrated liquidity</span>
         </div>
         <ConnectButton />
       </header>

@@ -1,135 +1,36 @@
-# MayfieldSwap Architecture
+# Architecture
 
-## 🏗️ System Overview
+MayfieldSwap is a from-scratch **Uniswap V4–style** DEX.
 
-MayfieldSwap is built using a modular architecture with clear separation between smart contracts, frontend, and infrastructure layers.
+## Core flow
 
 ```
-┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   Frontend      │    │  Smart Contracts │    │   Blockchain    │
-│  (React/Next)   │────│   (Solidity)     │────│   (Hardhat)     │
-└─────────────────┘    └─────────────────┘    └─────────────────┘
+User → MayfieldRouter.unlock path → PoolManager.unlock
+         → Router.unlockCallback
+              → modifyLiquidity / swap
+              → sync → transfer → settle / take
+         ← deltas must be zero
 ```
 
-## 📝 Smart Contract Architecture
+## Concentrated liquidity
 
-### Core Contracts
+Each pool stores:
 
-#### SushiFactory
-- **Purpose**: Creates and manages trading pairs
-- **Key Functions**: `createPair()`, `setFeeTo()`, `setFeeToSetter()`
-- **Pattern**: Factory pattern for pair creation
+- `slot0`: `sqrtPriceX96`, `tick`
+- active `liquidity`
+- tick net/gross + tick bitmap
+- positions keyed by `(owner, tickLower, tickUpper)`
 
-#### SushiPair
-- **Purpose**: Individual AMM liquidity pools
-- **Key Functions**: `mint()`, `burn()`, `swap()`, `sync()`
-- **Pattern**: Automated Market Maker with constant product formula (x × y = k)
+The router currently mints **full-range** positions (`min/max usable tick` for spacing 60) and tracks user shares in `liquidityOf`.
 
-#### SushiRouter
-- **Purpose**: Main user interface for the protocol
-- **Key Functions**: `addLiquidity()`, `removeLiquidity()`, `swapExactTokensForTokens()`
-- **Pattern**: Router pattern for complex multi-step operations
+## Flash accounting
 
-### Supporting Contracts
+During unlock, currency deltas accumulate. Callers must `settle` debts and `take` credits before unlock returns.
 
-#### TestToken
-- **Purpose**: ERC-20 tokens for development and testing
-- **Features**: Standard ERC-20 with mint function for testing
+## Hooks
 
-#### WETH
-- **Purpose**: Wrapped Ether implementation
-- **Features**: Deposit/withdraw ETH, ERC-20 interface
+`IHooks` supports before/after initialize, add/remove liquidity, and swap. Pools may set `hooks = address(0)` or an `EmptyHooks` (or custom) contract.
 
-## 🎨 Frontend Architecture
+## Quoting
 
-### Technology Stack
-- **Framework**: Next.js 15 with App Router
-- **Styling**: Tailwind CSS for responsive design
-- **Web3**: wagmi + viem for blockchain interactions
-- **Wallet**: RainbowKit for wallet connections
-
-### Component Structure
-```
-src/
-├── app/
-│   ├── layout.tsx       # Root layout and providers
-│   ├── page.tsx         # Main DEX interface
-│   └── providers.tsx    # Web3 providers setup
-├── components/
-│   ├── SwapInterface.tsx       # Token swapping UI
-│   └── LiquidityInterface.tsx  # Liquidity management UI
-└── contracts/
-    └── config.ts        # Contract addresses and ABIs
-```
-
-## 🔄 Data Flow
-
-### Swap Transaction Flow
-1. User selects tokens and amounts in frontend
-2. Frontend calculates expected output using Router contract
-3. User approves token spending (if needed)
-4. Router executes swap through appropriate Pair contract
-5. Pair updates reserves and emits events
-6. Frontend updates UI with new balances
-
-### Liquidity Flow
-1. User provides token amounts for liquidity
-2. Router calls Pair contract to mint LP tokens
-3. LP tokens represent proportional ownership
-4. Removal burns LP tokens and returns underlying assets
-
-## 🧪 Testing Architecture
-
-### Smart Contract Tests
-- **Framework**: Hardhat with Mocha/Chai
-- **Coverage**: Factory, Router, Pair functionality
-- **Patterns**: Unit tests, integration tests, edge cases
-
-### Test Structure
-```
-test/
-└── SushiSwap.test.js    # Comprehensive test suite
-    ├── Factory Tests
-    ├── Router Tests  
-    ├── Swap Tests
-    ├── Liquidity Tests
-    └── Price Calculation Tests
-```
-
-## 🛡️ Security Considerations
-
-### Smart Contract Security
-- **Reentrancy Protection**: All external calls protected
-- **Integer Overflow**: SafeMath equivalent checks
-- **Access Control**: Proper permission management
-- **Deadline Protection**: Transaction deadline enforcement
-
-### Frontend Security
-- **Input Validation**: All user inputs validated
-- **Slippage Protection**: User-configurable slippage limits
-- **Error Handling**: Graceful error handling and user feedback
-
-## 📊 Performance Optimizations
-
-### Smart Contracts
-- **Gas Optimization**: Optimized loops and storage access
-- **Batch Operations**: Multiple operations in single transaction
-- **Efficient Storage**: Packed structs and minimal storage
-
-### Frontend
-- **Code Splitting**: Dynamic imports for better loading
-- **Caching**: React Query for blockchain data caching
-- **Optimistic Updates**: Immediate UI feedback
-
-## 🔮 Future Enhancements
-
-### Planned Features
-- **Yield Farming**: Reward distribution for liquidity providers
-- **Governance**: DAO functionality with voting
-- **Cross-Chain**: Bridge support for multi-chain operations
-- **Advanced Orders**: Limit orders and stop-loss functionality
-
-### Scalability
-- **Layer 2**: Deployment to Polygon, Arbitrum, Optimism
-- **Gas Optimization**: Further contract optimizations
-- **Caching**: Advanced caching strategies for better performance
+`Quoter.quoteExactInput` runs a swap inside `unlock` and reverts with `QuoteAmount(amountOut)` so UIs can `eth_call` / `simulateContract` safely.

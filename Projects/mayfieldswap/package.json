@@ -1,21 +1,22 @@
 {
   "name": "mayfieldswap",
-  "version": "1.0.0",
-  "description": "MayfieldSwap - A SushiSwap-style Decentralized Exchange (DEX)",
+  "version": "3.0.0",
+  "description": "MayfieldSwap — Uniswap V4-style DEX with concentrated liquidity",
   "main": "index.js",
   "scripts": {
     "compile": "hardhat compile",
     "test": "hardhat test",
-    "deploy": "hardhat run scripts/deploy.js",
-    "deploy:localhost": "hardhat run scripts/deploy.js --network localhost",
+    "deploy": "hardhat run scripts/deploy-v4.js",
+    "deploy:v4": "hardhat run scripts/deploy-v4.js",
+    "deploy:localhost": "hardhat run scripts/deploy-v4.js --network localhost",
     "node": "hardhat node --hostname 127.0.0.1",
     "clean": "hardhat clean",
     "dev": "concurrently \"npm run node\" \"cd frontend && npm run dev\"",
     "setup": "npm install && cd frontend && npm install"
   },
-  "keywords": ["defi", "dex", "ethereum", "solidity", "amm", "blockchain", "sushiswap"],
+  "keywords": ["defi", "dex", "uniswap-v4", "amm", "solidity", "ethereum"],
   "author": "Christopher Mayfield",
-  "license": "ISC",
+  "license": "MIT",
   "type": "commonjs",
   "devDependencies": {
     "@nomicfoundation/hardhat-toolbox": "^4.0.0",
