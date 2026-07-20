@@ -33,7 +33,7 @@ library Pool {
     using Tick for mapping(int24 => Tick.Info);
     using TickBitmap for mapping(int16 => uint256);
 
-    int24 internal constant TICK_SPACING = 1;
+    int24 internal constant TICK_SPACING = 1; // deprecated: use State.tickSpacing
 
     struct Slot0 {
         uint160 sqrtPriceX96;
@@ -44,6 +44,8 @@ library Pool {
     struct State {
         Slot0 slot0;
         uint128 liquidity;
+        int24 tickSpacing;
+        uint24 fee;
         mapping(int24 => Tick.Info) ticks;
         mapping(int16 => uint256) tickBitmap;
         mapping(bytes32 => Position.Info) positions;
@@ -81,10 +83,14 @@ library Pool {
         uint256 feeAmount;
     }
 
-    function initialize(State storage self, uint160 sqrtPriceX96) internal {
+    function initialize(State storage self, uint160 sqrtPriceX96, int24 tickSpacing, uint24 fee) internal {
         require(self.slot0.sqrtPriceX96 == 0, "Pool: already initialized");
         require(sqrtPriceX96 >= TickMath.MIN_SQRT_RATIO && sqrtPriceX96 < TickMath.MAX_SQRT_RATIO, "Pool: price");
+        require(tickSpacing > 0, "Pool: spacing");
+        require(fee < 1_000_000, "Pool: fee");
 
+        self.tickSpacing = tickSpacing;
+        self.fee = fee;
         self.slot0 = Slot0({sqrtPriceX96: sqrtPriceX96, tick: TickMath.getTickAtSqrtRatio(sqrtPriceX96), unlocked: true});
     }
 
@@ -113,8 +119,8 @@ library Pool {
                 type(uint128).max
             );
 
-            if (flippedLower) self.tickBitmap.flipTick(params.tickLower, TICK_SPACING);
-            if (flippedUpper) self.tickBitmap.flipTick(params.tickUpper, TICK_SPACING);
+            if (flippedLower) self.tickBitmap.flipTick(params.tickLower, self.tickSpacing);
+            if (flippedUpper) self.tickBitmap.flipTick(params.tickUpper, self.tickSpacing);
         }
 
         int24 tickCurrent = self.slot0.tick;
@@ -189,7 +195,7 @@ library Pool {
 
             (step.tickNext, step.initialized) = self.tickBitmap.nextInitializedTickWithinOneWord(
                 state.tick,
-                TICK_SPACING,
+                self.tickSpacing,
                 params.zeroForOne
             );
 
@@ -266,8 +272,15 @@ library Pool {
         require(tickUpper <= TickMath.MAX_TICK, "Pool: tick upper");
     }
 
-    function getPositionKey(address owner, int24 tickLower, int24 tickUpper) private pure returns (bytes32) {
+    function getPositionKey(address owner, int24 tickLower, int24 tickUpper) internal pure returns (bytes32) {
         return keccak256(abi.encodePacked(owner, tickLower, tickUpper));
     }
 
+    function getPosition(State storage self, address owner, int24 tickLower, int24 tickUpper)
+        internal
+        view
+        returns (Position.Info storage)
+    {
+        return self.positions[getPositionKey(owner, tickLower, tickUpper)];
+    }
 }

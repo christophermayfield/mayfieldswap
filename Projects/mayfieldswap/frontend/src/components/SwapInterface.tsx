@@ -1,20 +1,21 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { useAccount, useReadContract, useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
+import { useAccount, useReadContract, useWriteContract, useWaitForTransactionReceipt, usePublicClient } from 'wagmi';
 import { parseEther, formatEther } from 'viem';
-import { CONTRACT_ADDRESSES, ROUTER_ABI, ERC20_ABI } from '@/contracts/config';
+import { CONTRACT_ADDRESSES, ROUTER_ABI, QUOTER_ABI, ERC20_ABI } from '@/contracts/config';
 
 const CHAIN_ID = 31337;
 
 const TOKENS = [
   { symbol: 'ETH', address: 'ETH', name: 'Ethereum' },
-  { symbol: 'MF-A', address: CONTRACT_ADDRESSES[CHAIN_ID].TokenA, name: 'Mayfield Token A' },
-  { symbol: 'MF-B', address: CONTRACT_ADDRESSES[CHAIN_ID].TokenB, name: 'Mayfield Token B' },
+  { symbol: 'MF-A', address: CONTRACT_ADDRESSES[CHAIN_ID].TokenA, name: 'Mayfield A' },
+  { symbol: 'MF-B', address: CONTRACT_ADDRESSES[CHAIN_ID].TokenB, name: 'Mayfield B' },
 ];
 
 export default function SwapInterface() {
   const { address, isConnected } = useAccount();
+  const publicClient = usePublicClient();
   const [fromToken, setFromToken] = useState(TOKENS[0]);
   const [toToken, setToToken] = useState(TOKENS[1]);
   const [fromAmount, setFromAmount] = useState('');
@@ -22,6 +23,7 @@ export default function SwapInterface() {
   const [slippage, setSlippage] = useState('0.5');
 
   const router = CONTRACT_ADDRESSES[CHAIN_ID].MayfieldRouter as `0x${string}`;
+  const quoter = CONTRACT_ADDRESSES[CHAIN_ID].Quoter as `0x${string}`;
   const weth = CONTRACT_ADDRESSES[CHAIN_ID].WETH;
 
   const { writeContract, data: hash, isPending } = useWriteContract();
@@ -35,34 +37,62 @@ export default function SwapInterface() {
     query: { enabled: isConnected && fromToken.address !== 'ETH' },
   });
 
-  const path =
-    fromToken.address === 'ETH'
-      ? [weth, toToken.address]
-      : toToken.address === 'ETH'
-        ? [fromToken.address, weth]
-        : [fromToken.address, toToken.address];
-
-  const { data: amountsOut } = useReadContract({
+  const { data: poolKey } = useReadContract({
     address: router,
     abi: ROUTER_ABI,
-    functionName: 'getAmountsOut',
-    args: [fromAmount ? parseEther(fromAmount) : 0n, path],
-    query: { enabled: !!fromAmount && parseFloat(fromAmount) > 0 },
+    functionName: 'defaultKey',
+    args: [
+      fromToken.address === 'ETH' ? weth : fromToken.address,
+      toToken.address === 'ETH' ? weth : toToken.address,
+    ],
+    query: {
+      enabled:
+        !!fromAmount &&
+        fromToken.address !== toToken.address &&
+        !(fromToken.address === 'ETH' && toToken.address === 'ETH'),
+    },
   });
 
   useEffect(() => {
-    if (amountsOut && Array.isArray(amountsOut) && amountsOut.length > 1) {
-      setToAmount(formatEther(amountsOut[1] as bigint));
+    let cancelled = false;
+    async function quote() {
+      if (!publicClient || !poolKey || !fromAmount || parseFloat(fromAmount) <= 0) {
+        setToAmount('');
+        return;
+      }
+      const tokenIn = fromToken.address === 'ETH' ? weth : fromToken.address;
+      const key = poolKey as {
+        currency0: string;
+        currency1: string;
+        fee: number;
+        tickSpacing: number;
+        hooks: string;
+      };
+      const zeroForOne = key.currency0.toLowerCase() === tokenIn.toLowerCase();
+      try {
+        const amountOut = (await publicClient.simulateContract({
+          address: quoter,
+          abi: QUOTER_ABI,
+          functionName: 'quoteExactInput',
+          args: [key, zeroForOne, parseEther(fromAmount)],
+        })).result as bigint;
+        if (!cancelled) setToAmount(formatEther(amountOut));
+      } catch {
+        if (!cancelled) setToAmount('');
+      }
     }
-  }, [amountsOut]);
+    quote();
+    return () => {
+      cancelled = true;
+    };
+  }, [publicClient, poolKey, fromAmount, fromToken, toToken, quoter, weth]);
 
   const handleSwap = async () => {
     if (!fromAmount || !isConnected) return;
-
-    const deadline = Math.floor(Date.now() / 1000) + 300;
+    const deadline = BigInt(Math.floor(Date.now() / 1000) + 300);
     const amountIn = parseEther(fromAmount);
     const amountOutMin =
-      (parseEther(toAmount) * BigInt(Math.floor((100 - parseFloat(slippage)) * 100))) / 10000n;
+      (parseEther(toAmount || '0') * BigInt(Math.floor((100 - parseFloat(slippage)) * 100))) / 10000n;
 
     try {
       if (fromToken.address === 'ETH') {
@@ -70,7 +100,7 @@ export default function SwapInterface() {
           address: router,
           abi: ROUTER_ABI,
           functionName: 'swapExactETHForTokens',
-          args: [toToken.address, amountOutMin, address!, BigInt(deadline)],
+          args: [toToken.address, amountOutMin, address!, deadline],
           value: amountIn,
         });
       } else if (toToken.address === 'ETH') {
@@ -78,26 +108,19 @@ export default function SwapInterface() {
           address: router,
           abi: ROUTER_ABI,
           functionName: 'swapExactTokensForETH',
-          args: [fromToken.address, amountIn, amountOutMin, address!, BigInt(deadline)],
+          args: [fromToken.address, amountIn, amountOutMin, address!, deadline],
         });
       } else {
         await writeContract({
           address: router,
           abi: ROUTER_ABI,
           functionName: 'swapExactTokensForTokens',
-          args: [fromToken.address, toToken.address, amountIn, amountOutMin, address!, BigInt(deadline)],
+          args: [fromToken.address, toToken.address, amountIn, amountOutMin, address!, deadline],
         });
       }
     } catch (error) {
       console.error('Swap failed:', error);
     }
-  };
-
-  const switchTokens = () => {
-    setFromToken(toToken);
-    setToToken(fromToken);
-    setFromAmount(toAmount);
-    setToAmount(fromAmount);
   };
 
   if (!isConnected) {
@@ -110,7 +133,7 @@ export default function SwapInterface() {
 
   return (
     <div className="space-y-4">
-      <h2 className="text-xl font-bold text-white mb-6">Swap Tokens</h2>
+      <h2 className="text-xl font-bold text-white mb-6">Swap</h2>
 
       <div className="space-y-2">
         <label className="text-sm text-white/70">From</label>
@@ -143,36 +166,32 @@ export default function SwapInterface() {
 
       <div className="flex justify-center">
         <button
-          onClick={switchTokens}
+          onClick={() => {
+            setFromToken(toToken);
+            setToToken(fromToken);
+            setFromAmount(toAmount);
+            setToAmount(fromAmount);
+          }}
           className="bg-white/10 hover:bg-white/20 rounded-full p-2 transition-colors"
         >
-          <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4"
-            />
-          </svg>
+          ↕
         </button>
       </div>
 
       <div className="space-y-2">
         <label className="text-sm text-white/70">To</label>
         <div className="bg-white/5 rounded-xl p-4">
-          <div className="flex justify-between items-center mb-2">
-            <select
-              value={toToken.symbol}
-              onChange={(e) => setToToken(TOKENS.find((t) => t.symbol === e.target.value)!)}
-              className="bg-transparent text-white text-lg font-medium"
-            >
-              {TOKENS.map((token) => (
-                <option key={token.symbol} value={token.symbol} className="bg-gray-800">
-                  {token.symbol}
-                </option>
-              ))}
-            </select>
-          </div>
+          <select
+            value={toToken.symbol}
+            onChange={(e) => setToToken(TOKENS.find((t) => t.symbol === e.target.value)!)}
+            className="bg-transparent text-white text-lg font-medium mb-2"
+          >
+            {TOKENS.map((token) => (
+              <option key={token.symbol} value={token.symbol} className="bg-gray-800">
+                {token.symbol}
+              </option>
+            ))}
+          </select>
           <input
             type="number"
             value={toAmount}
@@ -184,7 +203,7 @@ export default function SwapInterface() {
       </div>
 
       <div className="flex justify-between items-center text-sm">
-        <span className="text-white/70">Slippage Tolerance</span>
+        <span className="text-white/70">Slippage</span>
         <div className="flex space-x-2">
           {['0.1', '0.5', '1.0'].map((value) => (
             <button
@@ -202,15 +221,13 @@ export default function SwapInterface() {
 
       <button
         onClick={handleSwap}
-        disabled={!fromAmount || isPending || isConfirming}
-        className="w-full bg-gradient-to-r from-pink-500 to-purple-600 hover:from-pink-600 hover:to-purple-700 disabled:from-gray-400 disabled:to-gray-500 disabled:cursor-not-allowed text-white font-bold py-4 px-6 rounded-xl transition-all"
+        disabled={!fromAmount || !toAmount || isPending || isConfirming}
+        className="w-full bg-gradient-to-r from-teal-500 to-cyan-600 hover:from-teal-600 hover:to-cyan-700 disabled:from-gray-400 disabled:to-gray-500 disabled:cursor-not-allowed text-white font-bold py-4 px-6 rounded-xl transition-all"
       >
         {isPending || isConfirming ? 'Swapping...' : 'Swap'}
       </button>
 
-      {isConfirmed && (
-        <div className="text-green-400 text-center text-sm">Swap completed successfully!</div>
-      )}
+      {isConfirmed && <div className="text-green-400 text-center text-sm">Swap confirmed</div>}
     </div>
   );
 }

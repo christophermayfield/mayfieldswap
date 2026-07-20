@@ -1,62 +1,36 @@
-# MayfieldSwap Architecture
+# Architecture
 
-## System Overview
+MayfieldSwap is a from-scratch **Uniswap V4–style** DEX.
 
-MayfieldSwap is migrating from a Uniswap V2 / SushiSwap layout to a **Uniswap V4–style** singleton architecture. Phase 1 implements V4 structure and flash accounting while keeping constant-product pool math.
+## Core flow
 
 ```
-┌─────────────────┐    ┌──────────────────────┐    ┌─────────────────┐
-│   Frontend      │    │  Smart Contracts     │    │   Blockchain    │
-│  (React/Next)   │────│  PoolManager + Router│────│   (Hardhat)     │
-└─────────────────┘    └──────────────────────┘    └─────────────────┘
+User → MayfieldRouter.unlock path → PoolManager.unlock
+         → Router.unlockCallback
+              → modifyLiquidity / swap
+              → sync → transfer → settle / take
+         ← deltas must be zero
 ```
 
-See [V4_MAPPING.md](./V4_MAPPING.md) for the full V2 → V4 concept map.
+## Concentrated liquidity
 
-## Smart Contract Architecture (V4 Phase 1)
+Each pool stores:
 
-### MayfieldPoolManager
-- Singleton that stores all pool state
-- `unlock` / callback flash accounting (`settle`, `take`, `sync`)
-- `initialize(PoolKey)`, `addLiquidity`, `removeLiquidityFor`, `swap`
+- `slot0`: `sqrtPriceX96`, `tick`
+- active `liquidity`
+- tick net/gross + tick bitmap
+- positions keyed by `(owner, tickLower, tickUpper)`
 
-### MayfieldRouter
-- User-facing periphery implementing `IUnlockCallback`
-- Encodes actions, settles currency deltas, unwraps WETH when needed
+The router currently mints **full-range** positions (`min/max usable tick` for spacing 60) and tracks user shares in `liquidityOf`.
 
-### PoolKey / PoolId
-- Pools identified by `(currency0, currency1, fee, tickSpacing, hooks)`
-- `PoolId = keccak256(abi.encode(PoolKey))`
+## Flash accounting
 
-### Hooks
-- `IHooks` before/after initialize, liquidity, and swap
-- `EmptyHooks` no-op; `address(0)` skips hook calls
+During unlock, currency deltas accumulate. Callers must `settle` debts and `take` credits before unlock returns.
 
-### Legacy (V2)
-- `SushiFactory` / `SushiPair` / `SushiRouter` under `contracts/legacy/`
+## Hooks
 
-## Frontend Architecture
+`IHooks` supports before/after initialize, add/remove liquidity, and swap. Pools may set `hooks = address(0)` or an `EmptyHooks` (or custom) contract.
 
-- **Framework**: Next.js App Router
-- **Web3**: wagmi + viem + RainbowKit
-- **Config**: `frontend/src/contracts/config.ts` points at V4 router/manager
+## Quoting
 
-## Data Flow (swap)
-
-1. User selects tokens and amount
-2. Frontend quotes via `MayfieldRouter.getAmountsOut`
-3. User approves ERC-20 spending if needed
-4. Router unlocks PoolManager and executes swap in callback
-5. Tokens are settled/taken; UI refreshes balances
-
-## Testing
-
-- `test/V4PoolManager.test.js` — V4 initialize, liquidity, swap, remove
-- `test/SushiSwap.test.js` — legacy V2 suite (still green)
-
-## Phase plan
-
-1. **Phase 1 (current):** V4 structure + CPMM math
-2. **Phase 2:** Example custom hooks
-3. **Phase 3:** Concentrated liquidity (`sqrtPriceX96`, ticks)
-4. **Phase 4:** Closer ABI alignment with official Uniswap V4 packages
+`Quoter.quoteExactInput` runs a swap inside `unlock` and reverts with `QuoteAmount(amountOut)` so UIs can `eth_call` / `simulateContract` safely.

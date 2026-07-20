@@ -8,8 +8,8 @@ import { CONTRACT_ADDRESSES, ROUTER_ABI, ERC20_ABI } from '@/contracts/config';
 const CHAIN_ID = 31337;
 
 const TOKENS = [
-  { symbol: 'MF-A', address: CONTRACT_ADDRESSES[CHAIN_ID].TokenA, name: 'Mayfield Token A' },
-  { symbol: 'MF-B', address: CONTRACT_ADDRESSES[CHAIN_ID].TokenB, name: 'Mayfield Token B' },
+  { symbol: 'MF-A', address: CONTRACT_ADDRESSES[CHAIN_ID].TokenA, name: 'Mayfield A' },
+  { symbol: 'MF-B', address: CONTRACT_ADDRESSES[CHAIN_ID].TokenB, name: 'Mayfield B' },
 ];
 
 export default function LiquidityInterface() {
@@ -21,7 +21,6 @@ export default function LiquidityInterface() {
   const [amountB, setAmountB] = useState('');
 
   const router = CONTRACT_ADDRESSES[CHAIN_ID].MayfieldRouter as `0x${string}`;
-
   const { writeContract, data: hash, isPending } = useWriteContract();
   const { isLoading: isConfirming, isSuccess: isConfirmed } = useWaitForTransactionReceipt({ hash });
 
@@ -51,47 +50,33 @@ export default function LiquidityInterface() {
 
   const handleAddLiquidity = async () => {
     if (!amountA || !amountB || !isConnected) return;
-
     const deadline = BigInt(Math.floor(Date.now() / 1000) + 300);
-    const amountADesired = parseEther(amountA);
-    const amountBDesired = parseEther(amountB);
-
+    const a = parseEther(amountA);
+    const b = parseEther(amountB);
     try {
       await writeContract({
         address: router,
         abi: ROUTER_ABI,
         functionName: 'addLiquidity',
-        args: [
-          tokenA.address,
-          tokenB.address,
-          amountADesired,
-          amountBDesired,
-          (amountADesired * 95n) / 100n,
-          (amountBDesired * 95n) / 100n,
-          address!,
-          deadline,
-        ],
+        args: [tokenA.address, tokenB.address, a, b, (a * 95n) / 100n, (b * 95n) / 100n, address!, deadline],
       });
     } catch (error) {
-      console.error('Add liquidity failed:', error);
+      console.error(error);
     }
   };
 
   const handleRemoveLiquidity = async () => {
     if (!lpBalance || !isConnected) return;
-
     const deadline = BigInt(Math.floor(Date.now() / 1000) + 300);
-    const liquidityToRemove = (lpBalance as bigint) / 2n;
-
     try {
       await writeContract({
         address: router,
         abi: ROUTER_ABI,
         functionName: 'removeLiquidity',
-        args: [tokenA.address, tokenB.address, liquidityToRemove, 0n, 0n, address!, deadline],
+        args: [tokenA.address, tokenB.address, (lpBalance as bigint) / 2n, 0n, 0n, address!, deadline],
       });
     } catch (error) {
-      console.error('Remove liquidity failed:', error);
+      console.error(error);
     }
   };
 
@@ -105,125 +90,85 @@ export default function LiquidityInterface() {
 
   return (
     <div className="space-y-6">
-      <h2 className="text-xl font-bold text-white mb-6">Liquidity Pool</h2>
+      <h2 className="text-xl font-bold text-white mb-2">Liquidity</h2>
+      <p className="text-white/60 text-sm">Full-range concentrated liquidity (V4-style PoolManager)</p>
 
       <div className="flex bg-white/5 rounded-xl p-1">
         <button
           onClick={() => setMode('add')}
-          className={`flex-1 py-2 px-4 rounded-lg text-sm font-medium transition-all ${
+          className={`flex-1 py-2 px-4 rounded-lg text-sm font-medium ${
             mode === 'add' ? 'bg-white text-gray-900' : 'text-white/70'
           }`}
         >
-          Add Liquidity
+          Add
         </button>
         <button
           onClick={() => setMode('remove')}
-          className={`flex-1 py-2 px-4 rounded-lg text-sm font-medium transition-all ${
+          className={`flex-1 py-2 px-4 rounded-lg text-sm font-medium ${
             mode === 'remove' ? 'bg-white text-gray-900' : 'text-white/70'
           }`}
         >
-          Remove Liquidity
+          Remove
         </button>
       </div>
 
       {mode === 'add' ? (
         <div className="space-y-4">
-          <div className="space-y-2">
-            <label className="text-sm text-white/70">Token A</label>
-            <div className="bg-white/5 rounded-xl p-4">
-              <div className="flex justify-between items-center mb-2">
+          {[
+            { token: tokenA, set: setTokenA, amount: amountA, setAmount: setAmountA, bal: balanceA },
+            { token: tokenB, set: setTokenB, amount: amountB, setAmount: setAmountB, bal: balanceB },
+          ].map((row, i) => (
+            <div key={i} className="bg-white/5 rounded-xl p-4 space-y-2">
+              <div className="flex justify-between items-center">
                 <select
-                  value={tokenA.symbol}
-                  onChange={(e) => setTokenA(TOKENS.find((t) => t.symbol === e.target.value)!)}
+                  value={row.token.symbol}
+                  onChange={(e) => row.set(TOKENS.find((t) => t.symbol === e.target.value)!)}
                   className="bg-transparent text-white text-lg font-medium"
                 >
-                  {TOKENS.map((token) => (
-                    <option key={token.symbol} value={token.symbol} className="bg-gray-800">
-                      {token.symbol}
+                  {TOKENS.map((t) => (
+                    <option key={t.symbol} value={t.symbol} className="bg-gray-800">
+                      {t.symbol}
                     </option>
                   ))}
                 </select>
-                <div className="text-xs text-white/50">
-                  Balance: {balanceA ? formatEther(balanceA as bigint) : '0.0'}
-                </div>
+                <span className="text-xs text-white/50">
+                  Balance: {row.bal ? formatEther(row.bal as bigint) : '0.0'}
+                </span>
               </div>
               <input
                 type="number"
-                value={amountA}
-                onChange={(e) => setAmountA(e.target.value)}
+                value={row.amount}
+                onChange={(e) => row.setAmount(e.target.value)}
                 placeholder="0.0"
                 className="w-full bg-transparent text-2xl text-white placeholder-white/30 outline-none"
               />
             </div>
-          </div>
-
-          <div className="space-y-2">
-            <label className="text-sm text-white/70">Token B</label>
-            <div className="bg-white/5 rounded-xl p-4">
-              <div className="flex justify-between items-center mb-2">
-                <select
-                  value={tokenB.symbol}
-                  onChange={(e) => setTokenB(TOKENS.find((t) => t.symbol === e.target.value)!)}
-                  className="bg-transparent text-white text-lg font-medium"
-                >
-                  {TOKENS.map((token) => (
-                    <option key={token.symbol} value={token.symbol} className="bg-gray-800">
-                      {token.symbol}
-                    </option>
-                  ))}
-                </select>
-                <div className="text-xs text-white/50">
-                  Balance: {balanceB ? formatEther(balanceB as bigint) : '0.0'}
-                </div>
-              </div>
-              <input
-                type="number"
-                value={amountB}
-                onChange={(e) => setAmountB(e.target.value)}
-                placeholder="0.0"
-                className="w-full bg-transparent text-2xl text-white placeholder-white/30 outline-none"
-              />
-            </div>
-          </div>
-
+          ))}
           <button
             onClick={handleAddLiquidity}
             disabled={!amountA || !amountB || isPending || isConfirming}
-            className="w-full bg-gradient-to-r from-green-500 to-blue-600 hover:from-green-600 hover:to-blue-700 disabled:from-gray-400 disabled:to-gray-500 disabled:cursor-not-allowed text-white font-bold py-4 px-6 rounded-xl transition-all"
+            className="w-full bg-gradient-to-r from-emerald-500 to-teal-600 disabled:from-gray-400 disabled:to-gray-500 text-white font-bold py-4 rounded-xl"
           >
-            {isPending || isConfirming ? 'Adding Liquidity...' : 'Add Liquidity'}
+            {isPending || isConfirming ? 'Adding...' : 'Add Liquidity'}
           </button>
         </div>
       ) : (
         <div className="space-y-4">
-          <div className="bg-white/5 rounded-xl p-4">
-            <div className="flex justify-between items-center">
-              <span className="text-white/70">Your pool shares</span>
-              <span className="text-white font-medium">
-                {lpBalance ? formatEther(lpBalance as bigint) : '0.0'}
-              </span>
-            </div>
-            <div className="flex justify-between items-center mt-2">
-              <span className="text-white/70">Pool</span>
-              <span className="text-white font-medium">
-                {tokenA.symbol}/{tokenB.symbol}
-              </span>
-            </div>
+          <div className="bg-white/5 rounded-xl p-4 flex justify-between">
+            <span className="text-white/70">Your liquidity</span>
+            <span className="text-white">{lpBalance ? formatEther(lpBalance as bigint) : '0.0'}</span>
           </div>
-
           <button
             onClick={handleRemoveLiquidity}
             disabled={!lpBalance || lpBalance === 0n || isPending || isConfirming}
-            className="w-full bg-gradient-to-r from-red-500 to-pink-600 hover:from-red-600 hover:to-pink-700 disabled:from-gray-400 disabled:to-gray-500 disabled:cursor-not-allowed text-white font-bold py-4 px-6 rounded-xl transition-all"
+            className="w-full bg-gradient-to-r from-rose-500 to-orange-600 disabled:from-gray-400 disabled:to-gray-500 text-white font-bold py-4 rounded-xl"
           >
-            {isPending || isConfirming ? 'Removing Liquidity...' : 'Remove 50% Liquidity'}
+            {isPending || isConfirming ? 'Removing...' : 'Remove 50%'}
           </button>
         </div>
       )}
 
-      {isConfirmed && (
-        <div className="text-green-400 text-center text-sm">Transaction completed successfully!</div>
-      )}
+      {isConfirmed && <div className="text-green-400 text-center text-sm">Transaction confirmed</div>}
     </div>
   );
 }
