@@ -1,135 +1,62 @@
 # MayfieldSwap Architecture
 
-## 🏗️ System Overview
+## System Overview
 
-MayfieldSwap is built using a modular architecture with clear separation between smart contracts, frontend, and infrastructure layers.
+MayfieldSwap is migrating from a Uniswap V2 / SushiSwap layout to a **Uniswap V4–style** singleton architecture. Phase 1 implements V4 structure and flash accounting while keeping constant-product pool math.
 
 ```
-┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   Frontend      │    │  Smart Contracts │    │   Blockchain    │
-│  (React/Next)   │────│   (Solidity)     │────│   (Hardhat)     │
-└─────────────────┘    └─────────────────┘    └─────────────────┘
+┌─────────────────┐    ┌──────────────────────┐    ┌─────────────────┐
+│   Frontend      │    │  Smart Contracts     │    │   Blockchain    │
+│  (React/Next)   │────│  PoolManager + Router│────│   (Hardhat)     │
+└─────────────────┘    └──────────────────────┘    └─────────────────┘
 ```
 
-## 📝 Smart Contract Architecture
+See [V4_MAPPING.md](./V4_MAPPING.md) for the full V2 → V4 concept map.
 
-### Core Contracts
+## Smart Contract Architecture (V4 Phase 1)
 
-#### SushiFactory
-- **Purpose**: Creates and manages trading pairs
-- **Key Functions**: `createPair()`, `setFeeTo()`, `setFeeToSetter()`
-- **Pattern**: Factory pattern for pair creation
+### MayfieldPoolManager
+- Singleton that stores all pool state
+- `unlock` / callback flash accounting (`settle`, `take`, `sync`)
+- `initialize(PoolKey)`, `addLiquidity`, `removeLiquidityFor`, `swap`
 
-#### SushiPair
-- **Purpose**: Individual AMM liquidity pools
-- **Key Functions**: `mint()`, `burn()`, `swap()`, `sync()`
-- **Pattern**: Automated Market Maker with constant product formula (x × y = k)
+### MayfieldRouter
+- User-facing periphery implementing `IUnlockCallback`
+- Encodes actions, settles currency deltas, unwraps WETH when needed
 
-#### SushiRouter
-- **Purpose**: Main user interface for the protocol
-- **Key Functions**: `addLiquidity()`, `removeLiquidity()`, `swapExactTokensForTokens()`
-- **Pattern**: Router pattern for complex multi-step operations
+### PoolKey / PoolId
+- Pools identified by `(currency0, currency1, fee, tickSpacing, hooks)`
+- `PoolId = keccak256(abi.encode(PoolKey))`
 
-### Supporting Contracts
+### Hooks
+- `IHooks` before/after initialize, liquidity, and swap
+- `EmptyHooks` no-op; `address(0)` skips hook calls
 
-#### TestToken
-- **Purpose**: ERC-20 tokens for development and testing
-- **Features**: Standard ERC-20 with mint function for testing
+### Legacy (V2)
+- `SushiFactory` / `SushiPair` / `SushiRouter` under `contracts/legacy/`
 
-#### WETH
-- **Purpose**: Wrapped Ether implementation
-- **Features**: Deposit/withdraw ETH, ERC-20 interface
+## Frontend Architecture
 
-## 🎨 Frontend Architecture
+- **Framework**: Next.js App Router
+- **Web3**: wagmi + viem + RainbowKit
+- **Config**: `frontend/src/contracts/config.ts` points at V4 router/manager
 
-### Technology Stack
-- **Framework**: Next.js 15 with App Router
-- **Styling**: Tailwind CSS for responsive design
-- **Web3**: wagmi + viem for blockchain interactions
-- **Wallet**: RainbowKit for wallet connections
+## Data Flow (swap)
 
-### Component Structure
-```
-src/
-├── app/
-│   ├── layout.tsx       # Root layout and providers
-│   ├── page.tsx         # Main DEX interface
-│   └── providers.tsx    # Web3 providers setup
-├── components/
-│   ├── SwapInterface.tsx       # Token swapping UI
-│   └── LiquidityInterface.tsx  # Liquidity management UI
-└── contracts/
-    └── config.ts        # Contract addresses and ABIs
-```
+1. User selects tokens and amount
+2. Frontend quotes via `MayfieldRouter.getAmountsOut`
+3. User approves ERC-20 spending if needed
+4. Router unlocks PoolManager and executes swap in callback
+5. Tokens are settled/taken; UI refreshes balances
 
-## 🔄 Data Flow
+## Testing
 
-### Swap Transaction Flow
-1. User selects tokens and amounts in frontend
-2. Frontend calculates expected output using Router contract
-3. User approves token spending (if needed)
-4. Router executes swap through appropriate Pair contract
-5. Pair updates reserves and emits events
-6. Frontend updates UI with new balances
+- `test/V4PoolManager.test.js` — V4 initialize, liquidity, swap, remove
+- `test/SushiSwap.test.js` — legacy V2 suite (still green)
 
-### Liquidity Flow
-1. User provides token amounts for liquidity
-2. Router calls Pair contract to mint LP tokens
-3. LP tokens represent proportional ownership
-4. Removal burns LP tokens and returns underlying assets
+## Phase plan
 
-## 🧪 Testing Architecture
-
-### Smart Contract Tests
-- **Framework**: Hardhat with Mocha/Chai
-- **Coverage**: Factory, Router, Pair functionality
-- **Patterns**: Unit tests, integration tests, edge cases
-
-### Test Structure
-```
-test/
-└── SushiSwap.test.js    # Comprehensive test suite
-    ├── Factory Tests
-    ├── Router Tests  
-    ├── Swap Tests
-    ├── Liquidity Tests
-    └── Price Calculation Tests
-```
-
-## 🛡️ Security Considerations
-
-### Smart Contract Security
-- **Reentrancy Protection**: All external calls protected
-- **Integer Overflow**: SafeMath equivalent checks
-- **Access Control**: Proper permission management
-- **Deadline Protection**: Transaction deadline enforcement
-
-### Frontend Security
-- **Input Validation**: All user inputs validated
-- **Slippage Protection**: User-configurable slippage limits
-- **Error Handling**: Graceful error handling and user feedback
-
-## 📊 Performance Optimizations
-
-### Smart Contracts
-- **Gas Optimization**: Optimized loops and storage access
-- **Batch Operations**: Multiple operations in single transaction
-- **Efficient Storage**: Packed structs and minimal storage
-
-### Frontend
-- **Code Splitting**: Dynamic imports for better loading
-- **Caching**: React Query for blockchain data caching
-- **Optimistic Updates**: Immediate UI feedback
-
-## 🔮 Future Enhancements
-
-### Planned Features
-- **Yield Farming**: Reward distribution for liquidity providers
-- **Governance**: DAO functionality with voting
-- **Cross-Chain**: Bridge support for multi-chain operations
-- **Advanced Orders**: Limit orders and stop-loss functionality
-
-### Scalability
-- **Layer 2**: Deployment to Polygon, Arbitrum, Optimism
-- **Gas Optimization**: Further contract optimizations
-- **Caching**: Advanced caching strategies for better performance
+1. **Phase 1 (current):** V4 structure + CPMM math
+2. **Phase 2:** Example custom hooks
+3. **Phase 3:** Concentrated liquidity (`sqrtPriceX96`, ticks)
+4. **Phase 4:** Closer ABI alignment with official Uniswap V4 packages

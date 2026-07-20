@@ -112,6 +112,7 @@ temp/
 # Hardhat files
 deployments/
 deployment.json
+deployment-v4.json
 
 # Package lock files (optional - you can keep one)
 package-lock.json

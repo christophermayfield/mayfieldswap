@@ -2,9 +2,9 @@
 pragma solidity ^0.8.19;
 
 import "./ISushiPair.sol";
-import "./libraries/Math.sol";
+import "../libraries/Math.sol";
 import "./libraries/UQ112x112.sol";
-import "./interfaces/IERC20.sol";
+import "../interfaces/IERC20.sol";
 import "./interfaces/ISushiFactory.sol";
 import "./interfaces/ISushiCallee.sol";
 

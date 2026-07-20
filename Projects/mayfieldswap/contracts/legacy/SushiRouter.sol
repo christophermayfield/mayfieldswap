@@ -2,11 +2,11 @@
 pragma solidity ^0.8.19;
 
 import './libraries/SushiLibrary.sol';
-import './libraries/TransferHelper.sol';
+import '../libraries/TransferHelper.sol';
 import './interfaces/ISushiRouter.sol';
 import './interfaces/ISushiFactory.sol';
-import './interfaces/IERC20.sol';
-import './interfaces/IWETH.sol';
+import '../interfaces/IERC20.sol';
+import '../interfaces/IWETH.sol';
 import './ISushiPair.sol';
 
 contract SushiRouter is ISushiRouter {
