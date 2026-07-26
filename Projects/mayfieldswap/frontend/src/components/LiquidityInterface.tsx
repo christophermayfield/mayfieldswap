@@ -1,9 +1,10 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useAccount, useWriteContract, useWaitForTransactionReceipt, useReadContract } from 'wagmi';
 import { parseEther, formatEther } from 'viem';
 import { CONTRACT_ADDRESSES, ROUTER_ABI, ERC20_ABI } from '@/contracts/config';
+import { useTokenApproval } from '@/hooks/useTokenApproval';
 
 const CHAIN_ID = 31337;
 
@@ -19,12 +20,45 @@ export default function LiquidityInterface() {
   const [tokenB, setTokenB] = useState(TOKENS[1]);
   const [amountA, setAmountA] = useState('');
   const [amountB, setAmountB] = useState('');
+  const [error, setError] = useState<string | null>(null);
 
   const router = CONTRACT_ADDRESSES[CHAIN_ID].MayfieldRouter as `0x${string}`;
   const { writeContract, data: hash, isPending } = useWriteContract();
   const { isLoading: isConfirming, isSuccess: isConfirmed } = useWaitForTransactionReceipt({ hash });
 
-  const { data: lpBalance } = useReadContract({
+  const amountAWei = useMemo(() => {
+    try {
+      return amountA && parseFloat(amountA) > 0 ? parseEther(amountA) : 0n;
+    } catch {
+      return 0n;
+    }
+  }, [amountA]);
+
+  const amountBWei = useMemo(() => {
+    try {
+      return amountB && parseFloat(amountB) > 0 ? parseEther(amountB) : 0n;
+    } catch {
+      return 0n;
+    }
+  }, [amountB]);
+
+  const approvalA = useTokenApproval({
+    token: tokenA.address as `0x${string}`,
+    owner: address,
+    spender: router,
+    amount: amountAWei,
+    enabled: isConnected && mode === 'add' && amountAWei > 0n,
+  });
+
+  const approvalB = useTokenApproval({
+    token: tokenB.address as `0x${string}`,
+    owner: address,
+    spender: router,
+    amount: amountBWei,
+    enabled: isConnected && mode === 'add' && amountBWei > 0n && tokenA.address !== tokenB.address,
+  });
+
+  const { data: lpBalance, refetch: refetchLp } = useReadContract({
     address: router,
     abi: ROUTER_ABI,
     functionName: 'getLiquidity',
@@ -48,25 +82,58 @@ export default function LiquidityInterface() {
     query: { enabled: isConnected },
   });
 
+  const needsApproveA = mode === 'add' && amountAWei > 0n && !approvalA.hasAllowance;
+  const needsApproveB =
+    mode === 'add' && amountBWei > 0n && tokenA.address !== tokenB.address && !approvalB.hasAllowance;
+
+  const handleApprove = async () => {
+    setError(null);
+    try {
+      if (needsApproveA) {
+        await approvalA.approve();
+        return;
+      }
+      if (needsApproveB) {
+        await approvalB.approve();
+      }
+    } catch (e) {
+      console.error(e);
+      setError('Approval failed. Check your wallet and try again.');
+    }
+  };
+
   const handleAddLiquidity = async () => {
     if (!amountA || !amountB || !isConnected) return;
+    if (needsApproveA || needsApproveB) return;
+
+    setError(null);
     const deadline = BigInt(Math.floor(Date.now() / 1000) + 300);
-    const a = parseEther(amountA);
-    const b = parseEther(amountB);
     try {
       await writeContract({
         address: router,
         abi: ROUTER_ABI,
         functionName: 'addLiquidity',
-        args: [tokenA.address, tokenB.address, a, b, (a * 95n) / 100n, (b * 95n) / 100n, address!, deadline],
+        args: [
+          tokenA.address,
+          tokenB.address,
+          amountAWei,
+          amountBWei,
+          (amountAWei * 95n) / 100n,
+          (amountBWei * 95n) / 100n,
+          address!,
+          deadline,
+        ],
       });
-    } catch (error) {
-      console.error(error);
+      await refetchLp();
+    } catch (e) {
+      console.error(e);
+      setError('Add liquidity failed. Check balances and approvals.');
     }
   };
 
   const handleRemoveLiquidity = async () => {
     if (!lpBalance || !isConnected) return;
+    setError(null);
     const deadline = BigInt(Math.floor(Date.now() / 1000) + 300);
     try {
       await writeContract({
@@ -75,8 +142,10 @@ export default function LiquidityInterface() {
         functionName: 'removeLiquidity',
         args: [tokenA.address, tokenB.address, (lpBalance as bigint) / 2n, 0n, 0n, address!, deadline],
       });
-    } catch (error) {
-      console.error(error);
+      await refetchLp();
+    } catch (e) {
+      console.error(e);
+      setError('Remove liquidity failed.');
     }
   };
 
@@ -87,6 +156,13 @@ export default function LiquidityInterface() {
       </div>
     );
   }
+
+  const busy = isPending || isConfirming || approvalA.isApproving || approvalB.isApproving;
+  const approveLabel = needsApproveA
+    ? `Approve ${tokenA.symbol}`
+    : needsApproveB
+      ? `Approve ${tokenB.symbol}`
+      : 'Approve';
 
   return (
     <div className="space-y-6">
@@ -144,13 +220,24 @@ export default function LiquidityInterface() {
               />
             </div>
           ))}
-          <button
-            onClick={handleAddLiquidity}
-            disabled={!amountA || !amountB || isPending || isConfirming}
-            className="w-full bg-gradient-to-r from-emerald-500 to-teal-600 disabled:from-gray-400 disabled:to-gray-500 text-white font-bold py-4 rounded-xl"
-          >
-            {isPending || isConfirming ? 'Adding...' : 'Add Liquidity'}
-          </button>
+
+          {needsApproveA || needsApproveB ? (
+            <button
+              onClick={handleApprove}
+              disabled={!amountA || !amountB || busy || tokenA.address === tokenB.address}
+              className="w-full bg-gradient-to-r from-amber-500 to-orange-600 disabled:from-gray-400 disabled:to-gray-500 text-white font-bold py-4 rounded-xl"
+            >
+              {approvalA.isApproving || approvalB.isApproving ? 'Approving...' : approveLabel}
+            </button>
+          ) : (
+            <button
+              onClick={handleAddLiquidity}
+              disabled={!amountA || !amountB || busy || tokenA.address === tokenB.address}
+              className="w-full bg-gradient-to-r from-emerald-500 to-teal-600 disabled:from-gray-400 disabled:to-gray-500 text-white font-bold py-4 rounded-xl"
+            >
+              {isPending || isConfirming ? 'Adding...' : 'Add Liquidity'}
+            </button>
+          )}
         </div>
       ) : (
         <div className="space-y-4">
@@ -160,7 +247,7 @@ export default function LiquidityInterface() {
           </div>
           <button
             onClick={handleRemoveLiquidity}
-            disabled={!lpBalance || lpBalance === 0n || isPending || isConfirming}
+            disabled={!lpBalance || lpBalance === 0n || busy}
             className="w-full bg-gradient-to-r from-rose-500 to-orange-600 disabled:from-gray-400 disabled:to-gray-500 text-white font-bold py-4 rounded-xl"
           >
             {isPending || isConfirming ? 'Removing...' : 'Remove 50%'}
@@ -168,6 +255,7 @@ export default function LiquidityInterface() {
         </div>
       )}
 
+      {error && <div className="text-rose-400 text-center text-sm">{error}</div>}
       {isConfirmed && <div className="text-green-400 text-center text-sm">Transaction confirmed</div>}
     </div>
   );

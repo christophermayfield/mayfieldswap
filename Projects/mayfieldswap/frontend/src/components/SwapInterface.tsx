@@ -1,9 +1,10 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useAccount, useReadContract, useWriteContract, useWaitForTransactionReceipt, usePublicClient } from 'wagmi';
 import { parseEther, formatEther } from 'viem';
 import { CONTRACT_ADDRESSES, ROUTER_ABI, QUOTER_ABI, ERC20_ABI } from '@/contracts/config';
+import { useTokenApproval } from '@/hooks/useTokenApproval';
 
 const CHAIN_ID = 31337;
 
@@ -21,10 +22,33 @@ export default function SwapInterface() {
   const [fromAmount, setFromAmount] = useState('');
   const [toAmount, setToAmount] = useState('');
   const [slippage, setSlippage] = useState('0.5');
+  const [error, setError] = useState<string | null>(null);
 
   const router = CONTRACT_ADDRESSES[CHAIN_ID].MayfieldRouter as `0x${string}`;
   const quoter = CONTRACT_ADDRESSES[CHAIN_ID].Quoter as `0x${string}`;
   const weth = CONTRACT_ADDRESSES[CHAIN_ID].WETH;
+
+  const amountIn = useMemo(() => {
+    try {
+      return fromAmount && parseFloat(fromAmount) > 0 ? parseEther(fromAmount) : BigInt(0);
+    } catch {
+      return BigInt(0);
+    }
+  }, [fromAmount]);
+
+  const needsApproval = fromToken.address !== 'ETH' && amountIn > BigInt(0);
+
+  const {
+    hasAllowance,
+    approve,
+    isApproving,
+  } = useTokenApproval({
+    token: needsApproval ? (fromToken.address as `0x${string}`) : undefined,
+    owner: address,
+    spender: router,
+    amount: amountIn,
+    enabled: isConnected && needsApproval,
+  });
 
   const { writeContract, data: hash, isPending } = useWriteContract();
   const { isLoading: isConfirming, isSuccess: isConfirmed } = useWaitForTransactionReceipt({ hash });
@@ -87,10 +111,22 @@ export default function SwapInterface() {
     };
   }, [publicClient, poolKey, fromAmount, fromToken, toToken, quoter, weth]);
 
+  const handleApprove = async () => {
+    setError(null);
+    try {
+      await approve();
+    } catch (e) {
+      console.error('Approve failed:', e);
+      setError('Approval failed. Check your wallet and try again.');
+    }
+  };
+
   const handleSwap = async () => {
     if (!fromAmount || !isConnected) return;
+    if (needsApproval && !hasAllowance) return;
+
+    setError(null);
     const deadline = BigInt(Math.floor(Date.now() / 1000) + 300);
-    const amountIn = parseEther(fromAmount);
     const amountOutMin =
       (parseEther(toAmount || '0') * BigInt(Math.floor((100 - parseFloat(slippage)) * 100))) / 10000n;
 
@@ -118,8 +154,9 @@ export default function SwapInterface() {
           args: [fromToken.address, toToken.address, amountIn, amountOutMin, address!, deadline],
         });
       }
-    } catch (error) {
-      console.error('Swap failed:', error);
+    } catch (e) {
+      console.error('Swap failed:', e);
+      setError('Swap failed. Check balance, allowance, and pool liquidity.');
     }
   };
 
@@ -130,6 +167,9 @@ export default function SwapInterface() {
       </div>
     );
   }
+
+  const busy = isPending || isConfirming || isApproving;
+  const showApprove = needsApproval && !hasAllowance;
 
   return (
     <div className="space-y-4">
@@ -219,14 +259,25 @@ export default function SwapInterface() {
         </div>
       </div>
 
-      <button
-        onClick={handleSwap}
-        disabled={!fromAmount || !toAmount || isPending || isConfirming}
-        className="w-full bg-gradient-to-r from-teal-500 to-cyan-600 hover:from-teal-600 hover:to-cyan-700 disabled:from-gray-400 disabled:to-gray-500 disabled:cursor-not-allowed text-white font-bold py-4 px-6 rounded-xl transition-all"
-      >
-        {isPending || isConfirming ? 'Swapping...' : 'Swap'}
-      </button>
+      {showApprove ? (
+        <button
+          onClick={handleApprove}
+          disabled={!fromAmount || busy}
+          className="w-full bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-600 hover:to-orange-700 disabled:from-gray-400 disabled:to-gray-500 disabled:cursor-not-allowed text-white font-bold py-4 px-6 rounded-xl transition-all"
+        >
+          {isApproving ? 'Approving...' : `Approve ${fromToken.symbol}`}
+        </button>
+      ) : (
+        <button
+          onClick={handleSwap}
+          disabled={!fromAmount || !toAmount || busy}
+          className="w-full bg-gradient-to-r from-teal-500 to-cyan-600 hover:from-teal-600 hover:to-cyan-700 disabled:from-gray-400 disabled:to-gray-500 disabled:cursor-not-allowed text-white font-bold py-4 px-6 rounded-xl transition-all"
+        >
+          {isPending || isConfirming ? 'Swapping...' : 'Swap'}
+        </button>
+      )}
 
+      {error && <div className="text-rose-400 text-center text-sm">{error}</div>}
       {isConfirmed && <div className="text-green-400 text-center text-sm">Swap confirmed</div>}
     </div>
   );
