@@ -246,6 +246,28 @@ export default function LiquidityInterface() {
             <span className="text-white">{lpBalance ? formatEther(lpBalance as bigint) : '0.0'}</span>
           </div>
           <button
+            onClick={async () => {
+              if (!isConnected) return;
+              setError(null);
+              const deadline = BigInt(Math.floor(Date.now() / 1000) + 300);
+              try {
+                await writeContract({
+                  address: router,
+                  abi: ROUTER_ABI,
+                  functionName: 'collectFees',
+                  args: [tokenA.address, tokenB.address, address!, deadline],
+                });
+              } catch (e) {
+                console.error(e);
+                setError('Collect fees failed. Fees may be zero until more swaps occur.');
+              }
+            }}
+            disabled={!lpBalance || lpBalance === 0n || busy}
+            className="w-full bg-gradient-to-r from-amber-500 to-yellow-600 disabled:from-gray-400 disabled:to-gray-500 text-white font-bold py-4 rounded-xl"
+          >
+            {isPending || isConfirming ? 'Collecting...' : 'Collect Fees'}
+          </button>
+          <button
             onClick={handleRemoveLiquidity}
             disabled={!lpBalance || lpBalance === 0n || busy}
             className="w-full bg-gradient-to-r from-rose-500 to-orange-600 disabled:from-gray-400 disabled:to-gray-500 text-white font-bold py-4 rounded-xl"

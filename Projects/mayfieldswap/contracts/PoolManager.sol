@@ -13,7 +13,7 @@ import "./libraries/Pool.sol";
 import "./libraries/SafeCast.sol";
 
 /// @title PoolManager
-/// @notice Uniswap V4–style singleton manager: unlock, concentrated liquidity, flash accounting.
+/// @notice Uniswap V4–style singleton manager: unlock, concentrated liquidity, flash accounting, LP fees.
 contract PoolManager is IPoolManager {
     using Pool for Pool.State;
     using PoolIdLibrary for PoolKey;
@@ -109,17 +109,17 @@ contract PoolManager is IPoolManager {
             }
         }
 
+        // Position owner is always the locker (router). Salt distinguishes end-users.
         (int256 amount0, int256 amount1) = pool.modifyPosition(
             Pool.ModifyPositionParams({
-                owner: params.owner,
+                owner: msg.sender,
                 tickLower: params.tickLower,
                 tickUpper: params.tickUpper,
-                liquidityDelta: params.liquidityDelta
+                liquidityDelta: params.liquidityDelta,
+                salt: params.salt
             })
         );
 
-        // Pool returns token deltas owed TO the pool when adding (positive amounts mean caller pays).
-        // Flash accounting: negative = caller owes manager.
         delta = BalanceDelta({amount0: (-amount0).toInt128(), amount1: (-amount1).toInt128()});
         _account(key.currency0, delta.amount0);
         _account(key.currency1, delta.amount1);
@@ -142,7 +142,25 @@ contract PoolManager is IPoolManager {
             }
         }
 
-        emit ModifyLiquidity(id, msg.sender, params.tickLower, params.tickUpper, params.liquidityDelta);
+        emit ModifyLiquidity(id, msg.sender, params.tickLower, params.tickUpper, params.liquidityDelta, params.salt);
+    }
+
+    function collect(
+        PoolKey memory key,
+        int24 tickLower,
+        int24 tickUpper,
+        bytes32 salt,
+        uint128 amount0Requested,
+        uint128 amount1Requested
+    ) external onlyWhenUnlocked returns (uint128 amount0, uint128 amount1) {
+        PoolId id = key.toId();
+        (amount0, amount1) =
+            _pools[id].collect(msg.sender, tickLower, tickUpper, salt, amount0Requested, amount1Requested);
+
+        if (amount0 > 0) _account(key.currency0, int256(uint256(amount0)));
+        if (amount1 > 0) _account(key.currency1, int256(uint256(amount1)));
+
+        emit Collect(id, msg.sender, tickLower, tickUpper, salt, amount0, amount1);
     }
 
     function swap(PoolKey memory key, SwapParams memory params, bytes calldata)
@@ -171,8 +189,6 @@ contract PoolManager is IPoolManager {
             })
         );
 
-        // Swap returns signed amounts from the pool's perspective matching Uniswap V3:
-        // positive amountX means tokens going TO the pool (caller pays).
         delta = BalanceDelta({amount0: (-amount0).toInt128(), amount1: (-amount1).toInt128()});
         _account(key.currency0, delta.amount0);
         _account(key.currency1, delta.amount1);
@@ -218,12 +234,34 @@ contract PoolManager is IPoolManager {
         return (pool.slot0.sqrtPriceX96, pool.slot0.tick, pool.liquidity);
     }
 
-    function getPositionLiquidity(PoolId id, address owner, int24 tickLower, int24 tickUpper)
+    function getFeeGrowthGlobals(PoolId id)
         external
         view
-        returns (uint128)
+        returns (uint256 feeGrowthGlobal0X128, uint256 feeGrowthGlobal1X128)
     {
-        return _pools[id].getPosition(owner, tickLower, tickUpper).liquidity;
+        Pool.State storage pool = _pools[id];
+        return (pool.feeGrowthGlobal0X128, pool.feeGrowthGlobal1X128);
+    }
+
+    function getPosition(PoolId id, address owner, int24 tickLower, int24 tickUpper, bytes32 salt)
+        external
+        view
+        returns (
+            uint128 liquidity,
+            uint256 feeGrowthInside0LastX128,
+            uint256 feeGrowthInside1LastX128,
+            uint128 tokensOwed0,
+            uint128 tokensOwed1
+        )
+    {
+        Position.Info storage position = _pools[id].getPosition(owner, tickLower, tickUpper, salt);
+        return (
+            position.liquidity,
+            position.feeGrowthInside0LastX128,
+            position.feeGrowthInside1LastX128,
+            position.tokensOwed0,
+            position.tokensOwed1
+        );
     }
 
     function isInitialized(PoolId id) external view returns (bool) {

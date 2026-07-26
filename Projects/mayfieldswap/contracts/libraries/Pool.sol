@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.19;
 
+import "./FixedPoint128.sol";
+import "./FullMath.sol";
 import "./LiquidityMath.sol";
 import "./SafeCast.sol";
 import "./SqrtPriceMath.sol";
@@ -9,31 +11,67 @@ import "./Tick.sol";
 import "./TickBitmap.sol";
 import "./TickMath.sol";
 
-/// @title Position state
-/// @notice Minimal position accounting for the educational pool.
+/// @title Position state with fee growth checkpoints and tokens owed
 library Position {
     using LiquidityMath for uint128;
 
     struct Info {
         uint128 liquidity;
+        uint256 feeGrowthInside0LastX128;
+        uint256 feeGrowthInside1LastX128;
+        uint128 tokensOwed0;
+        uint128 tokensOwed1;
     }
 
-    function update(Info storage self, int128 liquidityDelta) internal {
-        if (liquidityDelta == 0) return;
-        self.liquidity = self.liquidity.addDelta(liquidityDelta);
+    function update(
+        Info storage self,
+        int128 liquidityDelta,
+        uint256 feeGrowthInside0X128,
+        uint256 feeGrowthInside1X128
+    ) internal {
+        uint128 liquidity = self.liquidity;
+
+        if (liquidityDelta == 0) {
+            require(liquidity > 0, "Position: clear");
+        } else {
+            self.liquidity = liquidity.addDelta(liquidityDelta);
+        }
+
+        unchecked {
+            uint128 tokensOwed0 = uint128(
+                FullMath.mulDiv(
+                    feeGrowthInside0X128 - self.feeGrowthInside0LastX128,
+                    liquidity,
+                    FixedPoint128.Q128
+                )
+            );
+            uint128 tokensOwed1 = uint128(
+                FullMath.mulDiv(
+                    feeGrowthInside1X128 - self.feeGrowthInside1LastX128,
+                    liquidity,
+                    FixedPoint128.Q128
+                )
+            );
+
+            if (tokensOwed0 > 0 || tokensOwed1 > 0) {
+                self.tokensOwed0 += tokensOwed0;
+                self.tokensOwed1 += tokensOwed1;
+            }
+        }
+
+        self.feeGrowthInside0LastX128 = feeGrowthInside0X128;
+        self.feeGrowthInside1LastX128 = feeGrowthInside1X128;
     }
 }
 
 /// @title Pool
-/// @notice Minimal Uniswap V3/V4-style pool state machine for educational swaps and liquidity changes.
+/// @notice Uniswap V3/V4-style pool with concentrated liquidity and LP fee growth
 library Pool {
     using LiquidityMath for uint128;
     using Position for Position.Info;
     using SafeCast for uint256;
     using Tick for mapping(int24 => Tick.Info);
     using TickBitmap for mapping(int16 => uint256);
-
-    int24 internal constant TICK_SPACING = 1; // deprecated: use State.tickSpacing
 
     struct Slot0 {
         uint160 sqrtPriceX96;
@@ -46,6 +84,8 @@ library Pool {
         uint128 liquidity;
         int24 tickSpacing;
         uint24 fee;
+        uint256 feeGrowthGlobal0X128;
+        uint256 feeGrowthGlobal1X128;
         mapping(int24 => Tick.Info) ticks;
         mapping(int16 => uint256) tickBitmap;
         mapping(bytes32 => Position.Info) positions;
@@ -56,6 +96,7 @@ library Pool {
         int24 tickLower;
         int24 tickUpper;
         int128 liquidityDelta;
+        bytes32 salt;
     }
 
     struct SwapParams {
@@ -71,6 +112,7 @@ library Pool {
         uint160 sqrtPriceX96;
         int24 tick;
         uint128 liquidity;
+        uint256 feeGrowthGlobalX128;
     }
 
     struct StepComputations {
@@ -94,27 +136,44 @@ library Pool {
         self.slot0 = Slot0({sqrtPriceX96: sqrtPriceX96, tick: TickMath.getTickAtSqrtRatio(sqrtPriceX96), unlocked: true});
     }
 
-    function modifyPosition(
-        State storage self,
-        ModifyPositionParams memory params
-    ) internal returns (int256 amount0, int256 amount1) {
+    function modifyPosition(State storage self, ModifyPositionParams memory params)
+        internal
+        returns (int256 amount0, int256 amount1)
+    {
         require(self.slot0.sqrtPriceX96 != 0, "Pool: uninitialized");
         checkTicks(params.tickLower, params.tickUpper);
 
-        Position.Info storage position = self.positions[getPositionKey(params.owner, params.tickLower, params.tickUpper)];
+        Position.Info storage position = self.positions[
+            getPositionKey(params.owner, params.tickLower, params.tickUpper, params.salt)
+        ];
+
+        (uint256 feeGrowthInside0X128, uint256 feeGrowthInside1X128) = self.ticks.getFeeGrowthInside(
+            params.tickLower,
+            params.tickUpper,
+            self.slot0.tick,
+            self.feeGrowthGlobal0X128,
+            self.feeGrowthGlobal1X128
+        );
+
         bool flippedLower;
         bool flippedUpper;
 
         if (params.liquidityDelta != 0) {
             flippedLower = self.ticks.update(
                 params.tickLower,
+                self.slot0.tick,
                 params.liquidityDelta,
+                self.feeGrowthGlobal0X128,
+                self.feeGrowthGlobal1X128,
                 false,
                 type(uint128).max
             );
             flippedUpper = self.ticks.update(
                 params.tickUpper,
+                self.slot0.tick,
                 params.liquidityDelta,
+                self.feeGrowthGlobal0X128,
+                self.feeGrowthGlobal1X128,
                 true,
                 type(uint128).max
             );
@@ -122,6 +181,8 @@ library Pool {
             if (flippedLower) self.tickBitmap.flipTick(params.tickLower, self.tickSpacing);
             if (flippedUpper) self.tickBitmap.flipTick(params.tickUpper, self.tickSpacing);
         }
+
+        position.update(params.liquidityDelta, feeGrowthInside0X128, feeGrowthInside1X128);
 
         int24 tickCurrent = self.slot0.tick;
         if (tickCurrent < params.tickLower) {
@@ -150,11 +211,30 @@ library Pool {
             );
         }
 
-        position.update(params.liquidityDelta);
-
         if (params.liquidityDelta < 0) {
             if (flippedLower) self.ticks.clear(params.tickLower);
             if (flippedUpper) self.ticks.clear(params.tickUpper);
+        }
+    }
+
+    function collect(
+        State storage self,
+        address owner,
+        int24 tickLower,
+        int24 tickUpper,
+        bytes32 salt,
+        uint128 amount0Requested,
+        uint128 amount1Requested
+    ) internal returns (uint128 amount0, uint128 amount1) {
+        Position.Info storage position =
+            self.positions[getPositionKey(owner, tickLower, tickUpper, salt)];
+
+        amount0 = amount0Requested > position.tokensOwed0 ? position.tokensOwed0 : amount0Requested;
+        amount1 = amount1Requested > position.tokensOwed1 ? position.tokensOwed1 : amount1Requested;
+
+        unchecked {
+            if (amount0 > 0) position.tokensOwed0 -= amount0;
+            if (amount1 > 0) position.tokensOwed1 -= amount1;
         }
     }
 
@@ -184,7 +264,8 @@ library Pool {
             amountCalculated: 0,
             sqrtPriceX96: slot0Start.sqrtPriceX96,
             tick: slot0Start.tick,
-            liquidity: self.liquidity
+            liquidity: self.liquidity,
+            feeGrowthGlobalX128: params.zeroForOne ? self.feeGrowthGlobal0X128 : self.feeGrowthGlobal1X128
         });
 
         while (state.amountSpecifiedRemaining != 0 && state.sqrtPriceX96 != params.sqrtPriceLimitX96) {
@@ -234,9 +315,20 @@ library Pool {
                 state.amountCalculated += (step.amountIn + step.feeAmount).toInt256();
             }
 
+            if (state.liquidity > 0) {
+                unchecked {
+                    state.feeGrowthGlobalX128 +=
+                        FullMath.mulDiv(step.feeAmount, FixedPoint128.Q128, state.liquidity);
+                }
+            }
+
             if (state.sqrtPriceX96 == step.sqrtPriceNextX96) {
                 if (step.initialized) {
-                    int128 liquidityNet = self.ticks.cross(step.tickNext);
+                    int128 liquidityNet = self.ticks.cross(
+                        step.tickNext,
+                        params.zeroForOne ? state.feeGrowthGlobalX128 : self.feeGrowthGlobal0X128,
+                        params.zeroForOne ? self.feeGrowthGlobal1X128 : state.feeGrowthGlobalX128
+                    );
                     if (params.zeroForOne) liquidityNet = -liquidityNet;
                     state.liquidity = state.liquidity.addDelta(liquidityNet);
                 }
@@ -257,6 +349,12 @@ library Pool {
             self.liquidity = state.liquidity;
         }
 
+        if (params.zeroForOne) {
+            self.feeGrowthGlobal0X128 = state.feeGrowthGlobalX128;
+        } else {
+            self.feeGrowthGlobal1X128 = state.feeGrowthGlobalX128;
+        }
+
         if (params.zeroForOne == exactInput) {
             amount0 = params.amountSpecified - state.amountSpecifiedRemaining;
             amount1 = state.amountCalculated;
@@ -272,15 +370,19 @@ library Pool {
         require(tickUpper <= TickMath.MAX_TICK, "Pool: tick upper");
     }
 
-    function getPositionKey(address owner, int24 tickLower, int24 tickUpper) internal pure returns (bytes32) {
-        return keccak256(abi.encodePacked(owner, tickLower, tickUpper));
+    function getPositionKey(address owner, int24 tickLower, int24 tickUpper, bytes32 salt)
+        internal
+        pure
+        returns (bytes32)
+    {
+        return keccak256(abi.encodePacked(owner, tickLower, tickUpper, salt));
     }
 
-    function getPosition(State storage self, address owner, int24 tickLower, int24 tickUpper)
+    function getPosition(State storage self, address owner, int24 tickLower, int24 tickUpper, bytes32 salt)
         internal
         view
         returns (Position.Info storage)
     {
-        return self.positions[getPositionKey(owner, tickLower, tickUpper)];
+        return self.positions[getPositionKey(owner, tickLower, tickUpper, salt)];
     }
 }
