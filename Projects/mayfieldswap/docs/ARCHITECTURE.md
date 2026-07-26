@@ -21,7 +21,7 @@ Each pool stores:
 - tick net/gross + tick bitmap
 - positions keyed by `(owner, tickLower, tickUpper)`
 
-The router currently mints **full-range** positions (`min/max usable tick` for spacing 60) and tracks user shares in `liquidityOf`.
+The router currently mints **full-range** positions (`min/max usable tick` for spacing 60). Each LP is keyed by a per-user `salt` under the router-owned position namespace. Swap fees accrue via fee-growth checkpoints; LPs call `collectFees` (or receive fees on remove).
 
 ## Flash accounting
 
