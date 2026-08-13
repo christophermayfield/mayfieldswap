@@ -8,10 +8,10 @@ import "../types/BalanceDelta.sol";
 
 interface IPoolManager {
     struct ModifyLiquidityParams {
-        address owner;
         int24 tickLower;
         int24 tickUpper;
         int128 liquidityDelta;
+        bytes32 salt;
     }
 
     struct SwapParams {
@@ -32,7 +32,7 @@ interface IPoolManager {
     );
 
     event ModifyLiquidity(
-        PoolId indexed id, address indexed sender, int24 tickLower, int24 tickUpper, int128 liquidityDelta
+        PoolId indexed id, address indexed sender, int24 tickLower, int24 tickUpper, int128 liquidityDelta, bytes32 salt
     );
 
     event Swap(
@@ -45,6 +45,16 @@ interface IPoolManager {
         int24 tick
     );
 
+    event Collect(
+        PoolId indexed id,
+        address indexed sender,
+        int24 tickLower,
+        int24 tickUpper,
+        bytes32 salt,
+        uint128 amount0,
+        uint128 amount1
+    );
+
     function unlock(bytes calldata data) external returns (bytes memory);
 
     function initialize(PoolKey memory key, uint160 sqrtPriceX96) external returns (int24 tick);
@@ -52,6 +62,15 @@ interface IPoolManager {
     function modifyLiquidity(PoolKey memory key, ModifyLiquidityParams memory params, bytes calldata hookData)
         external
         returns (BalanceDelta memory delta);
+
+    function collect(
+        PoolKey memory key,
+        int24 tickLower,
+        int24 tickUpper,
+        bytes32 salt,
+        uint128 amount0Requested,
+        uint128 amount1Requested
+    ) external returns (uint128 amount0, uint128 amount1);
 
     function swap(PoolKey memory key, SwapParams memory params, bytes calldata hookData)
         external
@@ -65,10 +84,26 @@ interface IPoolManager {
 
     function getSlot0(PoolId id) external view returns (uint160 sqrtPriceX96, int24 tick, uint128 liquidity);
 
-    function getPositionLiquidity(PoolId id, address owner, int24 tickLower, int24 tickUpper)
+    function getFeeGrowthGlobals(PoolId id)
         external
         view
-        returns (uint128 liquidity);
+        returns (uint256 feeGrowthGlobal0X128, uint256 feeGrowthGlobal1X128);
+
+    function getPosition(PoolId id, address owner, int24 tickLower, int24 tickUpper, bytes32 salt)
+        external
+        view
+        returns (
+            uint128 liquidity,
+            uint256 feeGrowthInside0LastX128,
+            uint256 feeGrowthInside1LastX128,
+            uint128 tokensOwed0,
+            uint128 tokensOwed1
+        );
+
+    function getPendingFees(PoolId id, address owner, int24 tickLower, int24 tickUpper, bytes32 salt)
+        external
+        view
+        returns (uint128 amount0, uint128 amount1);
 
     function isInitialized(PoolId id) external view returns (bool);
 }

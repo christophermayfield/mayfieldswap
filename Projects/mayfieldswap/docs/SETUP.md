@@ -1,98 +1,113 @@
-# 🚀 MayfieldSwap Setup Guide
+# MayfieldSwap Setup Guide
 
-Quick setup guide to get your DEX running locally.
+Quick setup guide to get the educational DEX running locally.
 
 ## Prerequisites
+
 - Node.js v18+
 - MetaMask browser extension
 - Git
 
-## 🏁 Quick Start
+## Quick start
 
-### 1. Clone & Install
+### 1. Clone & install
+
 ```bash
 git clone <your-repo-url>
-cd mayfieldswap
-npm run setup  # Installs all dependencies
+cd Projects/mayfieldswap
+npm run setup
 ```
 
-### 2. Start Development Environment
-```bash
-# Option A: Start everything at once
-npm run dev
+### 2. Run the stack
 
-# Option B: Start manually in separate terminals
-# Terminal 1: Blockchain
+Use three terminals (deploy needs a running node):
+
+```bash
+# Terminal 1: local chain
 npm run node
 
-# Terminal 2: Deploy contracts
-npm run deploy
+# Terminal 2: deploy PoolManager, router, quoter, and test tokens
+npm run deploy:localhost
 
-# Terminal 3: Frontend
+# Terminal 3: frontend
 cd frontend && npm run dev
 ```
 
+`npm run dev` starts the Hardhat node and Next.js together but **does not deploy**. Run `deploy:localhost` once the node is up.
+
 ### 3. Configure MetaMask
+
 - **Network Name**: Hardhat Local
 - **RPC URL**: `http://127.0.0.1:8545`
 - **Chain ID**: `31337`
 - **Currency**: ETH
 
-### 4. Import Test Account
-Use any private key from the Hardhat output:
+### 4. Import a test account
+
+Use a private key from the Hardhat node output, for example:
+
 ```
 Private Key: 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
 Address: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
-Balance: 10,000 ETH
 ```
 
-### 5. Access Your DEX
-Open `http://localhost:3000` and start trading!
+### 5. Open the UI
 
-## 🧪 Testing
+Open `http://localhost:3000`. Swap, add full-range liquidity, and collect the 0.30% swap fee after trades.
+
+## Testing
+
 ```bash
-npm test  # Run all smart contract tests
+npm test
 ```
 
-## 📱 Available Scripts
-- `npm run compile` - Compile smart contracts
-- `npm run deploy` - Deploy to local network
-- `npm run test` - Run tests
-- `npm run clean` - Clean Hardhat cache
-- `npm run setup` - Install all dependencies
+## Scripts
 
-## 🔗 URLs
+- `npm run compile` — compile contracts
+- `npm run node` — local Hardhat chain
+- `npm run deploy:localhost` — deploy V4 stack to localhost and write `frontend/src/contracts/config.ts`
+- `npm run deploy:v4` / `npm run deploy` — deploy using the Hardhat network from config
+- `npm test` — contract tests
+- `npm run clean` — clear Hardhat cache
+- `npm run setup` — install root and frontend dependencies
+
+## URLs
+
 - Frontend: http://localhost:3000
 - Blockchain RPC: http://127.0.0.1:8545
 - Chain ID: 31337
 
-## 📋 Features
-- ✅ Token swapping (ETH ↔ Tokens, Token ↔ Token)
-- ✅ Liquidity provision/removal
-- ✅ Real-time price calculations
-- ✅ Wallet integration
-- ✅ Slippage protection
+## Features
 
-## 🆘 Troubleshooting
+- Token swapping (ETH ↔ tokens, token ↔ token)
+- Full-range liquidity add/remove
+- LP swap-fee accrual and collect
+- Wallet connection (RainbowKit)
+- Slippage protection on swaps
+
+## Troubleshooting
 
 ### Frontend won't start
+
 ```bash
 cd frontend
-rm -rf node_modules package-lock.json
+rm -rf node_modules
 npm install
 npm run dev
 ```
 
-### MetaMask issues
-1. Reset MetaMask account (Settings → Advanced → Reset Account)
+### MetaMask nonce errors
+
+1. Reset the account (Settings → Advanced → Reset Account)
 2. Re-import the test account
-3. Make sure you're on the Hardhat Local network
+3. Confirm you are on Hardhat Local (`31337`)
 
 ### Contract deployment fails
+
 ```bash
 npm run clean
 npm run compile
-npm run deploy
+npm run deploy:localhost
 ```
 
-For detailed documentation, see `README_DEX.md`.
+See [ARCHITECTURE.md](ARCHITECTURE.md) and [V4_MAPPING.md](V4_MAPPING.md) for protocol details.

@@ -58,23 +58,23 @@ export default function Home() {
         <div className="mt-16 grid md:grid-cols-3 gap-8 max-w-4xl mx-auto">
           <div className="bg-white/10 backdrop-blur-md rounded-2xl p-6">
             <div className="text-2xl mb-4">⚡</div>
-            <h3 className="text-xl font-bold text-white mb-2">Fast Swaps</h3>
+            <h3 className="text-xl font-bold text-white mb-2">Singleton swaps</h3>
             <p className="text-white/70">
-              Lightning-fast token swaps with minimal gas fees and optimal pricing.
+              Unlock/flash accounting against a Uniswap V4–style PoolManager on a local chain.
             </p>
           </div>
           <div className="bg-white/10 backdrop-blur-md rounded-2xl p-6">
             <div className="text-2xl mb-4">💰</div>
-            <h3 className="text-xl font-bold text-white mb-2">Earn Rewards</h3>
+            <h3 className="text-xl font-bold text-white mb-2">Collect swap fees</h3>
             <p className="text-white/70">
-              Provide liquidity to earn trading fees and rewards from the protocol.
+              LPs earn the 0.30% swap fee via fee-growth checkpoints. Collect anytime, or on remove.
             </p>
           </div>
           <div className="bg-white/10 backdrop-blur-md rounded-2xl p-6">
-            <div className="text-2xl mb-4">🔒</div>
-            <h3 className="text-xl font-bold text-white mb-2">Secure</h3>
+            <div className="text-2xl mb-4">🧪</div>
+            <h3 className="text-xl font-bold text-white mb-2">Educational</h3>
             <p className="text-white/70">
-              Built with security-first principles and audited smart contracts.
+              Local-only demo software. Not audited — do not use with real funds.
             </p>
           </div>
         </div>

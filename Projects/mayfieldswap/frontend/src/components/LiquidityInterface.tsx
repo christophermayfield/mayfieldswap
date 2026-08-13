@@ -66,6 +66,14 @@ export default function LiquidityInterface() {
     query: { enabled: !!address && tokenA.address !== tokenB.address },
   });
 
+  const { data: pendingFees, refetch: refetchFees } = useReadContract({
+    address: router,
+    abi: ROUTER_ABI,
+    functionName: 'getPendingFees',
+    args: [tokenA.address, tokenB.address, address],
+    query: { enabled: !!address && tokenA.address !== tokenB.address },
+  });
+
   const { data: balanceA } = useReadContract({
     address: tokenA.address as `0x${string}`,
     abi: ERC20_ABI,
@@ -125,6 +133,7 @@ export default function LiquidityInterface() {
         ],
       });
       await refetchLp();
+      await refetchFees();
     } catch (e) {
       console.error(e);
       setError('Add liquidity failed. Check balances and approvals.');
@@ -143,9 +152,28 @@ export default function LiquidityInterface() {
         args: [tokenA.address, tokenB.address, (lpBalance as bigint) / 2n, 0n, 0n, address!, deadline],
       });
       await refetchLp();
+      await refetchFees();
     } catch (e) {
       console.error(e);
       setError('Remove liquidity failed.');
+    }
+  };
+
+  const handleCollectFees = async () => {
+    if (!isConnected) return;
+    setError(null);
+    const deadline = BigInt(Math.floor(Date.now() / 1000) + 300);
+    try {
+      await writeContract({
+        address: router,
+        abi: ROUTER_ABI,
+        functionName: 'collectFees',
+        args: [tokenA.address, tokenB.address, address!, deadline],
+      });
+      await refetchFees();
+    } catch (e) {
+      console.error(e);
+      setError('Collect fees failed. Fees may be zero until more swaps occur.');
     }
   };
 
@@ -168,6 +196,34 @@ export default function LiquidityInterface() {
     <div className="space-y-6">
       <h2 className="text-xl font-bold text-white mb-2">Liquidity</h2>
       <p className="text-white/60 text-sm">Full-range concentrated liquidity (V4-style PoolManager)</p>
+
+      {(lpBalance as bigint | undefined) && lpBalance !== 0n ? (
+        <div className="bg-white/5 rounded-xl p-4 space-y-3">
+          <div className="flex justify-between text-sm">
+            <span className="text-white/70">Your liquidity</span>
+            <span className="text-white">{formatEther(lpBalance as bigint)}</span>
+          </div>
+          <div className="flex justify-between text-sm">
+            <span className="text-white/70">Uncollected fees</span>
+            <span className="text-white">
+              {pendingFees
+                ? `${formatEther((pendingFees as [bigint, bigint])[0])} / ${formatEther((pendingFees as [bigint, bigint])[1])}`
+                : '0.0 / 0.0'}
+            </span>
+          </div>
+          <button
+            onClick={handleCollectFees}
+            disabled={
+              busy ||
+              !pendingFees ||
+              ((pendingFees as [bigint, bigint])[0] === 0n && (pendingFees as [bigint, bigint])[1] === 0n)
+            }
+            className="w-full bg-gradient-to-r from-amber-500 to-yellow-600 disabled:from-gray-400 disabled:to-gray-500 text-white font-bold py-3 rounded-xl"
+          >
+            {isPending || isConfirming ? 'Collecting...' : 'Collect Fees'}
+          </button>
+        </div>
+      ) : null}
 
       <div className="flex bg-white/5 rounded-xl p-1">
         <button
@@ -241,10 +297,6 @@ export default function LiquidityInterface() {
         </div>
       ) : (
         <div className="space-y-4">
-          <div className="bg-white/5 rounded-xl p-4 flex justify-between">
-            <span className="text-white/70">Your liquidity</span>
-            <span className="text-white">{lpBalance ? formatEther(lpBalance as bigint) : '0.0'}</span>
-          </div>
           <button
             onClick={handleRemoveLiquidity}
             disabled={!lpBalance || lpBalance === 0n || busy}
