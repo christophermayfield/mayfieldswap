@@ -80,8 +80,9 @@ npm test
 ## Features
 
 - Token swapping (ETH ↔ tokens, token ↔ token)
-- Full-range liquidity add/remove
+- Concentrated liquidity (full-range or custom ticks)
 - LP swap-fee accrual and collect
+- Example `DynamicFeeHook` for hooked pools
 - Wallet connection (RainbowKit)
 - Slippage protection on swaps
 

@@ -11,23 +11,24 @@ MayfieldSwap was rewritten from a SushiSwap/Uniswap V2 Factory–Pair–Router d
 | Tokens held in pairs | Tokens held in manager; flash accounting |
 | Pair `lock` | `unlock` + `unlockCallback` |
 | No hooks | `IHooks` |
-| ERC-20 LP tokens per pair | Router-tracked liquidity shares (full-range UX) |
+| ERC-20 LP tokens per pair | Router-owned positions keyed by per-user `salt` + tick range |
 
 ## Intentional simplifications (educational)
 
 - No Position NFT manager (router owns pool positions; per-user `salt`)
 - Transient storage not used (storage deltas during unlock)
-- Frontend liquidity UI uses full-range ticks only
+- Default swap/liquidity UI uses the no-hook 0.30% pool; hooked pools are available via `poolKey` / `swapExactInputOnPool`
 
 ## Implemented since rewrite
 
 - LP fee growth globals / tick fee growth outside / position tokens owed
 - `collectFees` on the router (poke + collect + take)
 - `getPendingFees` view for uncheckpointed fees
+- Custom tick ranges (`addLiquidityWithRange`, liquidity UI presets)
+- Example `DynamicFeeHook` (`getSwapFee` override)
 
 ## Next extensions
 
-- Custom tick ranges in the UI
-- Example dynamic-fee / custom-curve hooks
 - EIP-1153 transient delta storage
 - Closer ABI parity with official `@uniswap/v4-core`
+- Position NFT manager / custom-curve hooks

@@ -169,12 +169,18 @@ contract PoolManager is IPoolManager {
         Pool.State storage pool = _pools[id];
         require(pool.slot0.sqrtPriceX96 != 0, "PM: not initialized");
 
+        uint24 feePips = pool.fee;
         if (key.hooks != address(0)) {
             require(
                 IHooks(key.hooks).beforeSwap(msg.sender, key, params.zeroForOne, params.amountSpecified)
                     == IHooks.beforeSwap.selector,
                 "PM: hook before swap"
             );
+            uint24 hookFee = IHooks(key.hooks).getSwapFee(key);
+            if (hookFee != 0) {
+                require(hookFee < 1_000_000, "PM: hook fee");
+                feePips = hookFee;
+            }
         }
 
         (int256 amount0, int256 amount1) = pool.swap(
@@ -182,7 +188,7 @@ contract PoolManager is IPoolManager {
                 zeroForOne: params.zeroForOne,
                 amountSpecified: params.amountSpecified,
                 sqrtPriceLimitX96: params.sqrtPriceLimitX96,
-                feePips: pool.fee
+                feePips: feePips
             })
         );
 

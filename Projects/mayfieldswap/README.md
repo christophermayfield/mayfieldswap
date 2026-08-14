@@ -14,9 +14,9 @@ Uniswap **V4–style** educational DEX: singleton `PoolManager`, concentrated li
 |---|---|
 | `PoolManager` | Singleton pools, `unlock`, `modifyLiquidity`, `swap`, `settle`/`take` |
 | `Pool` library | Concentrated liquidity + LP fee growth (`feeGrowthGlobal`, ticks, positions) |
-| `MayfieldRouter` | Periphery via `IUnlockCallback` (swap, liquidity, `collectFees`) |
+| `MayfieldRouter` | Periphery via `IUnlockCallback` (swap, ranged liquidity, `collectFees`) |
 | `Quoter` | Exact-input quotes via eth_call + revert |
-| `EmptyHooks` | No-op `IHooks` implementation |
+| `EmptyHooks` / `DynamicFeeHook` | No-op hooks, or owner-settable swap-fee override |
 
 Pools are identified by `PoolKey` `(currency0, currency1, fee, tickSpacing, hooks)`.
 
@@ -50,6 +50,8 @@ frontend/
 scripts/deploy-v4.js
 test/MayfieldSwap.v4.test.js
 test/FeeGrowth.test.js
+test/ConcentratedLiquidity.test.js
+test/DynamicFeeHook.test.js
 docs/
 ```
 
