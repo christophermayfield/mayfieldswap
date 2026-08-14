@@ -25,12 +25,11 @@ contract MayfieldRouter is IUnlockCallback {
     uint24 public constant DEFAULT_FEE = 3000;
     int24 public constant DEFAULT_TICK_SPACING = 60;
 
-    mapping(PoolId => mapping(address => uint128)) public liquidityOf;
-
     enum Action {
         Swap,
         AddLiquidity,
-        RemoveLiquidity
+        RemoveLiquidity,
+        CollectFees
     }
 
     struct SwapExactInputParams {
@@ -61,6 +60,14 @@ contract MayfieldRouter is IUnlockCallback {
         uint128 liquidity;
         uint256 amount0Min;
         uint256 amount1Min;
+        address recipient;
+        address owner;
+    }
+
+    struct CollectFeesParams {
+        PoolKey key;
+        int24 tickLower;
+        int24 tickUpper;
         address recipient;
         address owner;
     }
@@ -98,6 +105,10 @@ contract MayfieldRouter is IUnlockCallback {
     function fullRangeTicks() public pure returns (int24 tickLower, int24 tickUpper) {
         tickLower = (TickMath.MIN_TICK / DEFAULT_TICK_SPACING) * DEFAULT_TICK_SPACING;
         tickUpper = (TickMath.MAX_TICK / DEFAULT_TICK_SPACING) * DEFAULT_TICK_SPACING;
+    }
+
+    function positionSalt(address user) public pure returns (bytes32) {
+        return bytes32(uint256(uint160(user)));
     }
 
     function initializePool(address tokenA, address tokenB, uint160 sqrtPriceX96) external returns (int24 tick) {
@@ -263,9 +274,47 @@ contract MayfieldRouter is IUnlockCallback {
         (amount0, amount1) = abi.decode(result, (uint256, uint256));
     }
 
-    function getLiquidity(address tokenA, address tokenB, address owner) external view returns (uint128) {
+    function getLiquidity(address tokenA, address tokenB, address owner) external view returns (uint128 liquidity) {
         PoolKey memory key = defaultKey(tokenA, tokenB);
-        return liquidityOf[key.toId()][owner];
+        (int24 tickLower, int24 tickUpper) = fullRangeTicks();
+        (liquidity,,,,) =
+            poolManager.getPosition(key.toId(), address(this), tickLower, tickUpper, positionSalt(owner));
+    }
+
+    /// @notice Uncollected LP fees including uncheckpointed fee growth (no poke required).
+    function getPendingFees(address tokenA, address tokenB, address owner)
+        external
+        view
+        returns (uint128 amount0, uint128 amount1)
+    {
+        PoolKey memory key = defaultKey(tokenA, tokenB);
+        (int24 tickLower, int24 tickUpper) = fullRangeTicks();
+        return poolManager.getPendingFees(key.toId(), address(this), tickLower, tickUpper, positionSalt(owner));
+    }
+
+    /// @notice Checkpoint fee growth and withdraw accrued LP fees for the caller.
+    function collectFees(address tokenA, address tokenB, address recipient, uint256 deadline)
+        external
+        ensure(deadline)
+        returns (uint256 amount0, uint256 amount1)
+    {
+        PoolKey memory key = defaultKey(tokenA, tokenB);
+        (int24 tickLower, int24 tickUpper) = fullRangeTicks();
+        bytes memory result = poolManager.unlock(
+            abi.encode(
+                Action.CollectFees,
+                abi.encode(
+                    CollectFeesParams({
+                        key: key,
+                        tickLower: tickLower,
+                        tickUpper: tickUpper,
+                        recipient: recipient,
+                        owner: msg.sender
+                    })
+                )
+            )
+        );
+        (amount0, amount1) = abi.decode(result, (uint256, uint256));
     }
 
     function quoteExactInput(address tokenIn, address tokenOut, uint256 amountIn)
@@ -286,6 +335,7 @@ contract MayfieldRouter is IUnlockCallback {
         if (action == Action.Swap) return _swap(abi.decode(payload, (SwapExactInputParams)));
         if (action == Action.AddLiquidity) return _add(abi.decode(payload, (AddLiquidityParams)));
         if (action == Action.RemoveLiquidity) return _remove(abi.decode(payload, (RemoveLiquidityParams)));
+        if (action == Action.CollectFees) return _collect(abi.decode(payload, (CollectFeesParams)));
         revert("Router: action");
     }
 
@@ -320,13 +370,14 @@ contract MayfieldRouter is IUnlockCallback {
         );
         require(liquidity > 0, "Router: zero liquidity");
 
+        bytes32 salt = positionSalt(p.recipient);
         BalanceDelta memory delta = poolManager.modifyLiquidity(
             p.key,
             IPoolManager.ModifyLiquidityParams({
-                owner: address(this),
                 tickLower: p.tickLower,
                 tickUpper: p.tickUpper,
-                liquidityDelta: int128(uint128(liquidity))
+                liquidityDelta: int128(uint128(liquidity)),
+                salt: salt
             }),
             ""
         );
@@ -335,24 +386,26 @@ contract MayfieldRouter is IUnlockCallback {
         uint256 amount1 = uint256(int256(-delta.amount1));
         require(amount0 >= p.amount0Min && amount1 >= p.amount1Min, "Router: slippage");
 
-        liquidityOf[p.key.toId()][p.recipient] += liquidity;
+        // Pull any previously accrued fees sitting on the position (no-op for new LPs).
+        _collectSalt(p.key, p.tickLower, p.tickUpper, salt, p.recipient);
 
-        _pay(p.key.currency0, p.payer, amount0);
-        _pay(p.key.currency1, p.payer, amount1);
+        if (amount0 > 0) _pay(p.key.currency0, p.payer, amount0);
+        if (amount1 > 0) _pay(p.key.currency1, p.payer, amount1);
         return abi.encode(amount0, amount1, liquidity);
     }
 
     function _remove(RemoveLiquidityParams memory p) internal returns (bytes memory) {
-        require(liquidityOf[p.key.toId()][p.owner] >= p.liquidity, "Router: insufficient liq");
-        liquidityOf[p.key.toId()][p.owner] -= p.liquidity;
+        bytes32 salt = positionSalt(p.owner);
+        (uint128 owned,,,,) = poolManager.getPosition(p.key.toId(), address(this), p.tickLower, p.tickUpper, salt);
+        require(owned >= p.liquidity, "Router: insufficient liq");
 
         BalanceDelta memory delta = poolManager.modifyLiquidity(
             p.key,
             IPoolManager.ModifyLiquidityParams({
-                owner: address(this),
                 tickLower: p.tickLower,
                 tickUpper: p.tickUpper,
-                liquidityDelta: -int128(p.liquidity)
+                liquidityDelta: -int128(p.liquidity),
+                salt: salt
             }),
             ""
         );
@@ -361,9 +414,45 @@ contract MayfieldRouter is IUnlockCallback {
         uint256 amount1 = uint256(int256(delta.amount1));
         require(amount0 >= p.amount0Min && amount1 >= p.amount1Min, "Router: slippage");
 
-        poolManager.take(p.key.currency0, p.recipient, amount0);
-        poolManager.take(p.key.currency1, p.recipient, amount1);
+        if (amount0 > 0) poolManager.take(p.key.currency0, p.recipient, amount0);
+        if (amount1 > 0) poolManager.take(p.key.currency1, p.recipient, amount1);
+
+        (uint256 fee0, uint256 fee1) = _collectSalt(p.key, p.tickLower, p.tickUpper, salt, p.recipient);
+        return abi.encode(amount0 + fee0, amount1 + fee1);
+    }
+
+    function _collect(CollectFeesParams memory p) internal returns (bytes memory) {
+        bytes32 salt = positionSalt(p.owner);
+        (uint128 liquidity,,,,) = poolManager.getPosition(p.key.toId(), address(this), p.tickLower, p.tickUpper, salt);
+        require(liquidity > 0, "Router: no position");
+        poolManager.modifyLiquidity(
+            p.key,
+            IPoolManager.ModifyLiquidityParams({
+                tickLower: p.tickLower,
+                tickUpper: p.tickUpper,
+                liquidityDelta: 0,
+                salt: salt
+            }),
+            ""
+        );
+        (uint256 amount0, uint256 amount1) = _collectSalt(p.key, p.tickLower, p.tickUpper, salt, p.recipient);
+        require(amount0 > 0 || amount1 > 0, "Router: no fees");
         return abi.encode(amount0, amount1);
+    }
+
+    function _collectSalt(
+        PoolKey memory key,
+        int24 tickLower,
+        int24 tickUpper,
+        bytes32 salt,
+        address recipient
+    ) internal returns (uint256 amount0, uint256 amount1) {
+        (uint128 owed0, uint128 owed1) =
+            poolManager.collect(key, tickLower, tickUpper, salt, type(uint128).max, type(uint128).max);
+        amount0 = owed0;
+        amount1 = owed1;
+        if (amount0 > 0) poolManager.take(key.currency0, recipient, amount0);
+        if (amount1 > 0) poolManager.take(key.currency1, recipient, amount1);
     }
 
     function _pay(Currency currency, address payer, uint256 amount) internal {

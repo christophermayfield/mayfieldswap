@@ -23,7 +23,9 @@ export const ROUTER_ABI = [
   "function swapExactTokensForETH(address tokenIn, uint256 amountIn, uint256 amountOutMin, address recipient, uint256 deadline) external returns (uint256 amountOut)",
   "function addLiquidity(address tokenA, address tokenB, uint256 amountADesired, uint256 amountBDesired, uint256 amountAMin, uint256 amountBMin, address recipient, uint256 deadline) external returns (uint256 amount0, uint256 amount1, uint128 liquidity)",
   "function removeLiquidity(address tokenA, address tokenB, uint128 liquidity, uint256 amountAMin, uint256 amountBMin, address recipient, uint256 deadline) external returns (uint256 amount0, uint256 amount1)",
+  "function collectFees(address tokenA, address tokenB, address recipient, uint256 deadline) external returns (uint256 amount0, uint256 amount1)",
   "function getLiquidity(address tokenA, address tokenB, address owner) external view returns (uint128)",
+  "function getPendingFees(address tokenA, address tokenB, address owner) external view returns (uint128 amount0, uint128 amount1)",
   "function defaultKey(address tokenA, address tokenB) external pure returns (tuple(address currency0, address currency1, uint24 fee, int24 tickSpacing, address hooks))",
 ] as const;
 

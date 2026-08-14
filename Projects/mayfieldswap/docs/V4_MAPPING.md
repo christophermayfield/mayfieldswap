@@ -15,10 +15,15 @@ MayfieldSwap was rewritten from a SushiSwap/Uniswap V2 Factory–Pair–Router d
 
 ## Intentional simplifications (educational)
 
-- Fee growth / LP fee claims not fully tracked
-- No Position NFT manager (router owns pool positions)
+- No Position NFT manager (router owns pool positions; per-user `salt`)
 - Transient storage not used (storage deltas during unlock)
 - Frontend liquidity UI uses full-range ticks only
+
+## Implemented since rewrite
+
+- LP fee growth globals / tick fee growth outside / position tokens owed
+- `collectFees` on the router (poke + collect + take)
+- `getPendingFees` view for uncheckpointed fees
 
 ## Next extensions
 

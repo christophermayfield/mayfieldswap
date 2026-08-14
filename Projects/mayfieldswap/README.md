@@ -13,8 +13,8 @@ Uniswap **V4–style** educational DEX: singleton `PoolManager`, concentrated li
 | Piece | Role |
 |---|---|
 | `PoolManager` | Singleton pools, `unlock`, `modifyLiquidity`, `swap`, `settle`/`take` |
-| `Pool` library | Concentrated liquidity state (`sqrtPriceX96`, ticks, bitmap) |
-| `MayfieldRouter` | Periphery via `IUnlockCallback` |
+| `Pool` library | Concentrated liquidity + LP fee growth (`feeGrowthGlobal`, ticks, positions) |
+| `MayfieldRouter` | Periphery via `IUnlockCallback` (swap, liquidity, `collectFees`) |
 | `Quoter` | Exact-input quotes via eth_call + revert |
 | `EmptyHooks` | No-op `IHooks` implementation |
 
@@ -49,6 +49,7 @@ contracts/
 frontend/
 scripts/deploy-v4.js
 test/MayfieldSwap.v4.test.js
+test/FeeGrowth.test.js
 docs/
 ```
 
@@ -59,4 +60,4 @@ docs/
 
 ## License
 
-MIT — educational software; audit before any mainnet use.
+MIT — educational software; **not audited**. Do not use with real funds.

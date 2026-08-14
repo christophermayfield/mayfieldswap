@@ -5,8 +5,17 @@ describe("MayfieldSwap V4 Rewrite", function () {
   let poolManager, router, quoter, tokenA, tokenB, weth;
   let owner, addr1;
   const deadline = () => Math.floor(Date.now() / 1000) + 600;
-  // sqrt(1) * 2^96 = 2^96 → 1:1 price
   const SQRT_PRICE_1_1 = 1n << 96n;
+
+  async function poolIdFor(tokenX, tokenY) {
+    const key = await router.defaultKey(tokenX, tokenY);
+    return ethers.keccak256(
+      ethers.AbiCoder.defaultAbiCoder().encode(
+        ["tuple(address,address,uint24,int24,address)"],
+        [[key.currency0, key.currency1, key.fee, key.tickSpacing, key.hooks]]
+      )
+    );
+  }
 
   before(async function () {
     [owner, addr1] = await ethers.getSigners();
@@ -28,13 +37,7 @@ describe("MayfieldSwap V4 Rewrite", function () {
     await expect(router.initializePool(tokenA.target, tokenB.target, SQRT_PRICE_1_1))
       .to.emit(poolManager, "Initialize");
 
-    const key = await router.defaultKey(tokenA.target, tokenB.target);
-    const id = ethers.keccak256(
-      ethers.AbiCoder.defaultAbiCoder().encode(
-        ["tuple(address,address,uint24,int24,address)"],
-        [[key.currency0, key.currency1, key.fee, key.tickSpacing, key.hooks]]
-      )
-    );
+    const id = await poolIdFor(tokenA.target, tokenB.target);
     const slot0 = await poolManager.getSlot0(id);
     expect(slot0.sqrtPriceX96).to.equal(SQRT_PRICE_1_1);
     expect(await poolManager.isInitialized(id)).to.equal(true);
@@ -114,11 +117,9 @@ describe("MayfieldSwap V4 Rewrite", function () {
   });
 
   it("swaps ETH for tokens", async function () {
-    // Init WETH/tokenB pool and liquidity from owner
     await router.initializePool(weth.target, tokenB.target, SQRT_PRICE_1_1);
     await tokenB.approve(router.target, ethers.MaxUint256);
 
-    // Wrap ETH and add liquidity tokenB + WETH
     await weth.deposit({ value: ethers.parseEther("50") });
     await weth.approve(router.target, ethers.MaxUint256);
     await router.addLiquidity(
