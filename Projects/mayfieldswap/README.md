@@ -4,7 +4,7 @@ Uniswap **V4–style** educational DEX: singleton `PoolManager`, concentrated li
 
 ## Stack
 
-- **Solidity 0.8.19** + Hardhat
+- **Solidity 0.8.26** (Cancun / EIP-1153) + Hardhat
 - **Next.js** frontend (wagmi + RainbowKit)
 - Local chain `31337`
 
@@ -12,7 +12,7 @@ Uniswap **V4–style** educational DEX: singleton `PoolManager`, concentrated li
 
 | Piece | Role |
 |---|---|
-| `PoolManager` | Singleton pools, `unlock`, `modifyLiquidity`, `swap`, `settle`/`take` |
+| `PoolManager` | Singleton pools, `unlock`, `modifyLiquidity`, `swap`, `settle`/`take`, transient deltas |
 | `Pool` library | Concentrated liquidity + LP fee growth (`feeGrowthGlobal`, ticks, positions) |
 | `MayfieldRouter` | Periphery via `IUnlockCallback` (swap, liquidity, `collectFees`) |
 | `Quoter` | Exact-input quotes via eth_call + revert |
@@ -50,6 +50,7 @@ frontend/
 scripts/deploy-v4.js
 test/MayfieldSwap.v4.test.js
 test/FeeGrowth.test.js
+test/TransientAccounting.test.js
 docs/
 ```
 

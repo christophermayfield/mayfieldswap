@@ -25,7 +25,7 @@ The router currently mints **full-range** positions (`min/max usable tick` for s
 
 ## Flash accounting
 
-During unlock, currency deltas accumulate. Callers must `settle` debts and `take` credits before unlock returns.
+During unlock, currency deltas accumulate in **EIP-1153 transient storage** (`tstore` / `tload`). Callers must `settle` debts and `take` credits before unlock returns. The lock, per-currency deltas, and synced reserves are discarded at the end of the transaction, so they cannot leak into the next one.
 
 ## Hooks
 
