@@ -116,6 +116,91 @@ describe("PositionManager NFT", function () {
     );
   });
 
+  it("lets an approved operator collect fees", async function () {
+    await tokenA.connect(lp2).approve(positionManager.target, ethers.MaxUint256);
+    await tokenB.connect(lp2).approve(positionManager.target, ethers.MaxUint256);
+    await positionManager.connect(lp2).mint(
+      tokenA.target,
+      tokenB.target,
+      -60,
+      60,
+      ethers.parseEther("100"),
+      ethers.parseEther("100"),
+      0,
+      0,
+      lp2.address,
+      deadline()
+    );
+
+    await tokenA.connect(trader).approve(router.target, ethers.MaxUint256);
+    await tokenB.connect(trader).approve(router.target, ethers.MaxUint256);
+    await router.connect(trader).swapExactTokensForTokens(
+      tokenA.target,
+      tokenB.target,
+      ethers.parseEther("3"),
+      0,
+      trader.address,
+      deadline()
+    );
+
+    await positionManager.connect(lp2).setApprovalForAll(trader.address, true);
+    const balBefore = (await tokenA.balanceOf(lp2.address)) + (await tokenB.balanceOf(lp2.address));
+    await positionManager.connect(trader).collect(1n, lp2.address, deadline());
+    const balAfter = (await tokenA.balanceOf(lp2.address)) + (await tokenB.balanceOf(lp2.address));
+    expect(balAfter).to.be.gt(balBefore);
+  });
+
+  it("partially withdraws liquidity without burning the NFT", async function () {
+    await tokenA.connect(lp2).approve(positionManager.target, ethers.MaxUint256);
+    await tokenB.connect(lp2).approve(positionManager.target, ethers.MaxUint256);
+    await positionManager.connect(lp2).mint(
+      tokenA.target,
+      tokenB.target,
+      -120,
+      120,
+      ethers.parseEther("100"),
+      ethers.parseEther("100"),
+      0,
+      0,
+      lp2.address,
+      deadline()
+    );
+
+    const before = await positionManager.getLiquidity(1n);
+    await positionManager.connect(lp2).decreaseLiquidity(
+      1n,
+      before / 2n,
+      0,
+      0,
+      lp2.address,
+      deadline()
+    );
+
+    const after = await positionManager.getLiquidity(1n);
+    expect(after).to.be.lt(before);
+    expect(after).to.be.gt(0n);
+    expect(await positionManager.ownerOf(1n)).to.equal(lp2.address);
+  });
+
+  it("reverts on invalid tick range", async function () {
+    await tokenA.connect(lp2).approve(positionManager.target, ethers.MaxUint256);
+    await tokenB.connect(lp2).approve(positionManager.target, ethers.MaxUint256);
+    await expect(
+      positionManager.connect(lp2).mint(
+        tokenA.target,
+        tokenB.target,
+        120,
+        -120,
+        ethers.parseEther("10"),
+        ethers.parseEther("10"),
+        0,
+        0,
+        lp2.address,
+        deadline()
+      )
+    ).to.be.revertedWith("PMgr: ticks");
+  });
+
   it("burns the NFT when the full position is withdrawn", async function () {
     await tokenA.connect(lp2).approve(positionManager.target, ethers.MaxUint256);
     await tokenB.connect(lp2).approve(positionManager.target, ethers.MaxUint256);

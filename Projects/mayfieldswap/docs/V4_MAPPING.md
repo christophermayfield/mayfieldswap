@@ -27,9 +27,9 @@ MayfieldSwap was rewritten from a SushiSwap/Uniswap V2 Factory–Pair–Router d
 - Example `DynamicFeeHook` (`getSwapFee` override)
 - EIP-1153 transient lock / currency deltas / synced reserves (`tstore`/`tload`)
 - `PositionManager` ERC-721 LP NFTs keyed by `salt = tokenId`
+- Position NFT UI tab (mint / collect / burn MSLP tokens)
 
 ## Next extensions
 
 - Closer ABI parity with official `@uniswap/v4-core`
 - Custom-curve hooks
-- Position NFT UI in the frontend

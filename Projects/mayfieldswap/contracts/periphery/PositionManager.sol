@@ -36,9 +36,13 @@ contract PositionManager is IUnlockCallback {
 
     mapping(uint256 => address) internal _owners;
     mapping(address => uint256) internal _balanceOf;
+    mapping(uint256 => address) internal _tokenApprovals;
+    mapping(address => mapping(address => bool)) internal _operatorApprovals;
     mapping(uint256 => StoredPosition) public positions;
 
     event Transfer(address indexed from, address indexed to, uint256 indexed tokenId);
+    event Approval(address indexed owner, address indexed approved, uint256 indexed tokenId);
+    event ApprovalForAll(address indexed owner, address indexed operator, bool approved);
 
     enum Action {
         Mint,
@@ -80,8 +84,14 @@ contract PositionManager is IUnlockCallback {
     }
 
     modifier onlyTokenOwner(uint256 tokenId) {
-        require(ownerOf(tokenId) == msg.sender, "PMgr: not owner");
+        require(_isApprovedOrOwner(msg.sender, tokenId), "PMgr: not owner");
         _;
+    }
+
+    function _isApprovedOrOwner(address spender, uint256 tokenId) internal view returns (bool) {
+        address owner = _owners[tokenId];
+        return owner != address(0)
+            && (spender == owner || _tokenApprovals[tokenId] == spender || _operatorApprovals[owner][spender]);
     }
 
     constructor(address _poolManager, address _router) {
@@ -117,6 +127,51 @@ contract PositionManager is IUnlockCallback {
         );
     }
 
+    function getApproved(uint256 tokenId) external view returns (address) {
+        require(_owners[tokenId] != address(0), "PMgr: invalid token");
+        return _tokenApprovals[tokenId];
+    }
+
+    function isApprovedForAll(address owner, address operator) external view returns (bool) {
+        return _operatorApprovals[owner][operator];
+    }
+
+    struct PositionSummary {
+        address owner;
+        int24 tickLower;
+        int24 tickUpper;
+        uint128 liquidity;
+        uint128 pendingFees0;
+        uint128 pendingFees1;
+    }
+
+    function positionInfo(uint256 tokenId) external view returns (PositionSummary memory summary) {
+        StoredPosition memory pos = positions[tokenId];
+        summary.owner = _owners[tokenId];
+        require(summary.owner != address(0), "PMgr: invalid token");
+        summary.tickLower = pos.tickLower;
+        summary.tickUpper = pos.tickUpper;
+        (summary.liquidity,,,,) = poolManager.getPosition(
+            pos.key.toId(), address(this), pos.tickLower, pos.tickUpper, positionSalt(tokenId)
+        );
+        (summary.pendingFees0, summary.pendingFees1) = poolManager.getPendingFees(
+            pos.key.toId(), address(this), pos.tickLower, pos.tickUpper, positionSalt(tokenId)
+        );
+    }
+
+    function approve(address to, uint256 tokenId) external {
+        address owner = ownerOf(tokenId);
+        require(to != owner, "PMgr: approve owner");
+        require(msg.sender == owner || _operatorApprovals[owner][msg.sender], "PMgr: not owner");
+        _tokenApprovals[tokenId] = to;
+        emit Approval(owner, to, tokenId);
+    }
+
+    function setApprovalForAll(address operator, bool approved) external {
+        _operatorApprovals[msg.sender][operator] = approved;
+        emit ApprovalForAll(msg.sender, operator, approved);
+    }
+
     /// @notice Mint a new NFT representing a concentrated-liquidity position on the default pool.
     function mint(
         address tokenA,
@@ -134,6 +189,10 @@ contract PositionManager is IUnlockCallback {
         require(recipient != address(0), "PMgr: recipient");
 
         PoolKey memory key = router.defaultKey(tokenA, tokenB);
+        int24 spacing = key.tickSpacing;
+        tickLower = router.alignTick(tickLower, spacing);
+        tickUpper = router.alignTick(tickUpper, spacing);
+        require(tickLower < tickUpper, "PMgr: ticks");
         (address token0,) = router.sort(tokenA, tokenB);
         uint256 amount0Desired = tokenA == token0 ? amountADesired : amountBDesired;
         uint256 amount1Desired = tokenA == token0 ? amountBDesired : amountADesired;
@@ -203,7 +262,7 @@ contract PositionManager is IUnlockCallback {
     {
         require(block.timestamp <= deadline, "PMgr: expired");
         StoredPosition memory pos = positions[tokenId];
-        uint128 liquidity = this.getLiquidity(tokenId);
+        uint128 liquidity = _liquidityOf(tokenId, pos);
         require(liquidity > 0, "PMgr: empty");
 
         bytes memory result = poolManager.unlock(
@@ -252,9 +311,10 @@ contract PositionManager is IUnlockCallback {
     }
 
     function transferFrom(address from, address to, uint256 tokenId) external {
+        require(_isApprovedOrOwner(msg.sender, tokenId), "PMgr: not approved");
         require(ownerOf(tokenId) == from, "PMgr: owner");
         require(to != address(0), "PMgr: zero");
-        require(msg.sender == from, "PMgr: not approved");
+        delete _tokenApprovals[tokenId];
         _transfer(from, to, tokenId);
     }
 
@@ -292,7 +352,6 @@ contract PositionManager is IUnlockCallback {
         uint256 amount1 = uint256(int256(-delta.amount1));
         require(amount0 >= p.amount0Min && amount1 >= p.amount1Min, "PMgr: slippage");
 
-        _collectSalt(p.key, p.tickLower, p.tickUpper, salt, p.recipient);
         if (amount0 > 0) _pay(p.key.currency0, p.payer, amount0);
         if (amount1 > 0) _pay(p.key.currency1, p.payer, amount1);
 
@@ -382,9 +441,16 @@ contract PositionManager is IUnlockCallback {
         emit Transfer(address(0), to, tokenId);
     }
 
+    function _liquidityOf(uint256 tokenId, StoredPosition memory pos) internal view returns (uint128 liquidity) {
+        (liquidity,,,,) = poolManager.getPosition(
+            pos.key.toId(), address(this), pos.tickLower, pos.tickUpper, positionSalt(tokenId)
+        );
+    }
+
     function _burnToken(uint256 tokenId) internal {
         address owner = _owners[tokenId];
         require(owner != address(0), "PMgr: invalid token");
+        delete _tokenApprovals[tokenId];
         delete positions[tokenId];
         _owners[tokenId] = address(0);
         _balanceOf[owner]--;
