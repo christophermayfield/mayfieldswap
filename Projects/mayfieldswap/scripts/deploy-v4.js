@@ -20,6 +20,12 @@ async function main() {
   const quoter = await (await ethers.getContractFactory("Quoter")).deploy(poolManager.target);
   await quoter.waitForDeployment();
 
+  const positionManager = await (await ethers.getContractFactory("PositionManager")).deploy(
+    poolManager.target,
+    router.target
+  );
+  await positionManager.waitForDeployment();
+
   const dynamicFeeHook = await (await ethers.getContractFactory("DynamicFeeHook")).deploy(10_000);
   await dynamicFeeHook.waitForDeployment();
 
@@ -51,6 +57,7 @@ async function main() {
     WETH: weth.target,
     PoolManager: poolManager.target,
     MayfieldRouter: router.target,
+    PositionManager: positionManager.target,
     Quoter: quoter.target,
     DynamicFeeHook: dynamicFeeHook.target,
     TokenA: tokenA.target,
@@ -67,6 +74,7 @@ async function main() {
     WETH: "${weth.target}",
     PoolManager: "${poolManager.target}",
     MayfieldRouter: "${router.target}",
+    PositionManager: "${positionManager.target}",
     Quoter: "${quoter.target}",
     DynamicFeeHook: "${dynamicFeeHook.target}",
     TokenA: "${tokenA.target}",
@@ -76,6 +84,7 @@ async function main() {
     WETH: "",
     PoolManager: "",
     MayfieldRouter: "",
+    PositionManager: "",
     Quoter: "",
     DynamicFeeHook: "",
     TokenA: "",
@@ -101,6 +110,19 @@ export const ROUTER_ABI = [
   "function fullRangeTicks() external pure returns (int24 tickLower, int24 tickUpper)",
   "function defaultKey(address tokenA, address tokenB) external pure returns (tuple(address currency0, address currency1, uint24 fee, int24 tickSpacing, address hooks))",
   "function initializePool(address tokenA, address tokenB, uint160 sqrtPriceX96) external returns (int24 tick)",
+] as const;
+
+export const POSITION_MANAGER_ABI = [
+  "function mint(address tokenA, address tokenB, int24 tickLower, int24 tickUpper, uint256 amountADesired, uint256 amountBDesired, uint256 amountAMin, uint256 amountBMin, address recipient, uint256 deadline) external returns (uint256 tokenId, uint128 liquidity)",
+  "function decreaseLiquidity(uint256 tokenId, uint128 liquidity, uint256 amount0Min, uint256 amount1Min, address recipient, uint256 deadline) external returns (uint256 amount0, uint256 amount1)",
+  "function burn(uint256 tokenId, uint256 amount0Min, uint256 amount1Min, address recipient, uint256 deadline) external returns (uint256 amount0, uint256 amount1)",
+  "function collect(uint256 tokenId, address recipient, uint256 deadline) external returns (uint256 amount0, uint256 amount1)",
+  "function transferFrom(address from, address to, uint256 tokenId) external",
+  "function ownerOf(uint256 tokenId) external view returns (address)",
+  "function balanceOf(address owner) external view returns (uint256)",
+  "function getLiquidity(uint256 tokenId) external view returns (uint128)",
+  "function getPendingFees(uint256 tokenId) external view returns (uint128 amount0, uint128 amount1)",
+  "function positions(uint256 tokenId) external view returns (tuple(address currency0, address currency1, uint24 fee, int24 tickSpacing, address hooks) key, int24 tickLower, int24 tickUpper)",
 ] as const;
 
 export const QUOTER_ABI = [

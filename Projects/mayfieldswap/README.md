@@ -4,7 +4,7 @@ Uniswap **V4–style** educational DEX: singleton `PoolManager`, concentrated li
 
 ## Stack
 
-- **Solidity 0.8.26** (Cancun / EIP-1153) + Hardhat
+- **Solidity 0.8.28** (Cancun / EIP-1153) + Hardhat
 - **Next.js** frontend (wagmi + RainbowKit)
 - Local chain `31337`
 
