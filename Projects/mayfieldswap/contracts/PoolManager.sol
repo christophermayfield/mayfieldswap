@@ -11,9 +11,11 @@ import "./types/BalanceDelta.sol";
 import "./libraries/CurrencyLibrary.sol";
 import "./libraries/Pool.sol";
 import "./libraries/SafeCast.sol";
+import "./libraries/TransientLock.sol";
+import "./libraries/TransientDelta.sol";
 
 /// @title PoolManager
-/// @notice Uniswap V4–style singleton manager: unlock, concentrated liquidity, flash accounting, LP fees.
+/// @notice Uniswap V4–style singleton manager: unlock, concentrated liquidity, EIP-1153 flash accounting, LP fees.
 contract PoolManager is IPoolManager {
     using Pool for Pool.State;
     using PoolIdLibrary for PoolKey;
@@ -23,31 +25,22 @@ contract PoolManager is IPoolManager {
 
     mapping(PoolId => Pool.State) internal _pools;
 
-    mapping(Currency => int256) private currencyDeltas;
-    uint256 private nonzeroDeltaCount;
-    mapping(Currency => uint256) private syncedBalances;
-
-    address private locker;
-    bool private unlocked;
-
     modifier onlyWhenUnlocked() {
-        require(unlocked, "PM: locked");
-        require(msg.sender == locker, "PM: not locker");
+        require(TransientLock.isUnlocked(), "PM: locked");
+        require(msg.sender == TransientLock.locker(), "PM: not locker");
         _;
     }
 
     receive() external payable {}
 
     function unlock(bytes calldata data) external returns (bytes memory result) {
-        require(!unlocked, "PM: already unlocked");
-        unlocked = true;
-        locker = msg.sender;
+        require(!TransientLock.isUnlocked(), "PM: already unlocked");
+        TransientLock.unlock(msg.sender);
 
         result = IUnlockCallback(msg.sender).unlockCallback(data);
 
-        require(nonzeroDeltaCount == 0, "PM: unsettled");
-        unlocked = false;
-        locker = address(0);
+        require(TransientDelta.nonzeroCount() == 0, "PM: unsettled");
+        TransientLock.lock();
     }
 
     function initialize(PoolKey memory key, uint160 sqrtPriceX96) external returns (int24 tick) {
@@ -119,8 +112,8 @@ contract PoolManager is IPoolManager {
         );
 
         delta = BalanceDelta({amount0: (-amount0).toInt128(), amount1: (-amount1).toInt128()});
-        _account(key.currency0, delta.amount0);
-        _account(key.currency1, delta.amount1);
+        TransientDelta.account(key.currency0, delta.amount0);
+        TransientDelta.account(key.currency1, delta.amount1);
 
         if (key.hooks != address(0) && params.liquidityDelta != 0) {
             if (isAdd) {
@@ -154,8 +147,8 @@ contract PoolManager is IPoolManager {
         PoolId id = key.toId();
         (amount0, amount1) = _pools[id].collect(msg.sender, tickLower, tickUpper, salt, amount0Requested, amount1Requested);
 
-        if (amount0 > 0) _account(key.currency0, int256(uint256(amount0)));
-        if (amount1 > 0) _account(key.currency1, int256(uint256(amount1)));
+        if (amount0 > 0) TransientDelta.account(key.currency0, int256(uint256(amount0)));
+        if (amount1 > 0) TransientDelta.account(key.currency1, int256(uint256(amount1)));
 
         emit Collect(id, msg.sender, tickLower, tickUpper, salt, amount0, amount1);
     }
@@ -169,12 +162,18 @@ contract PoolManager is IPoolManager {
         Pool.State storage pool = _pools[id];
         require(pool.slot0.sqrtPriceX96 != 0, "PM: not initialized");
 
+        uint24 feePips = pool.fee;
         if (key.hooks != address(0)) {
             require(
                 IHooks(key.hooks).beforeSwap(msg.sender, key, params.zeroForOne, params.amountSpecified)
                     == IHooks.beforeSwap.selector,
                 "PM: hook before swap"
             );
+            uint24 hookFee = IHooks(key.hooks).getSwapFee(key);
+            if (hookFee != 0) {
+                require(hookFee < 1_000_000, "PM: hook fee");
+                feePips = hookFee;
+            }
         }
 
         (int256 amount0, int256 amount1) = pool.swap(
@@ -182,13 +181,13 @@ contract PoolManager is IPoolManager {
                 zeroForOne: params.zeroForOne,
                 amountSpecified: params.amountSpecified,
                 sqrtPriceLimitX96: params.sqrtPriceLimitX96,
-                feePips: pool.fee
+                feePips: feePips
             })
         );
 
         delta = BalanceDelta({amount0: (-amount0).toInt128(), amount1: (-amount1).toInt128()});
-        _account(key.currency0, delta.amount0);
-        _account(key.currency1, delta.amount1);
+        TransientDelta.account(key.currency0, delta.amount0);
+        TransientDelta.account(key.currency1, delta.amount1);
 
         if (key.hooks != address(0)) {
             require(
@@ -202,7 +201,7 @@ contract PoolManager is IPoolManager {
     }
 
     function sync(Currency currency) external onlyWhenUnlocked {
-        syncedBalances[currency] = currency.balanceOfSelf();
+        TransientDelta.setSynced(currency, currency.balanceOfSelf());
     }
 
     function settle(Currency currency) external payable onlyWhenUnlocked returns (uint256 paid) {
@@ -210,19 +209,19 @@ contract PoolManager is IPoolManager {
             paid = msg.value;
         } else {
             uint256 balance = currency.balanceOfSelf();
-            paid = balance - syncedBalances[currency];
-            syncedBalances[currency] = balance;
+            paid = balance - TransientDelta.getSynced(currency);
+            TransientDelta.setSynced(currency, balance);
         }
         require(paid > 0, "PM: no payment");
-        _account(currency, int256(paid));
+        TransientDelta.account(currency, int256(paid));
     }
 
     function take(Currency currency, address to, uint256 amount) external onlyWhenUnlocked {
         require(amount > 0, "PM: zero take");
-        _account(currency, -int256(amount));
+        TransientDelta.account(currency, -int256(amount));
         currency.transfer(to, amount);
         if (!currency.isNative()) {
-            syncedBalances[currency] = currency.balanceOfSelf();
+            TransientDelta.setSynced(currency, currency.balanceOfSelf());
         }
     }
 
@@ -273,14 +272,15 @@ contract PoolManager is IPoolManager {
         return _pools[id].slot0.sqrtPriceX96 != 0;
     }
 
-    function _account(Currency currency, int256 delta) private {
-        if (delta == 0) return;
-        int256 prev = currencyDeltas[currency];
-        int256 next = prev + delta;
-        unchecked {
-            if (prev == 0 && next != 0) nonzeroDeltaCount++;
-            else if (prev != 0 && next == 0) nonzeroDeltaCount--;
-        }
-        currencyDeltas[currency] = next;
+    function currencyDelta(Currency currency) external view returns (int256) {
+        return TransientDelta.get(currency);
+    }
+
+    function nonzeroDeltaCount() external view returns (uint256) {
+        return TransientDelta.nonzeroCount();
+    }
+
+    function isUnlocked() external view returns (bool) {
+        return TransientLock.isUnlocked();
     }
 }

@@ -11,23 +11,25 @@ MayfieldSwap was rewritten from a SushiSwap/Uniswap V2 Factory–Pair–Router d
 | Tokens held in pairs | Tokens held in manager; flash accounting |
 | Pair `lock` | `unlock` + `unlockCallback` |
 | No hooks | `IHooks` |
-| ERC-20 LP tokens per pair | Router-tracked liquidity shares (full-range UX) |
+| ERC-20 LP tokens per pair | ERC-721 positions (`PositionManager`) or router `salt` positions |
 
 ## Intentional simplifications (educational)
 
-- No Position NFT manager (router owns pool positions; per-user `salt`)
-- Transient storage not used (storage deltas during unlock)
-- Frontend liquidity UI uses full-range ticks only
+- Default swap/liquidity UI uses the no-hook 0.30% pool; hooked pools via `poolKey` / `swapExactInputOnPool`
+- Minimal ERC-721 (no royalties / permit extensions)
 
 ## Implemented since rewrite
 
 - LP fee growth globals / tick fee growth outside / position tokens owed
 - `collectFees` on the router (poke + collect + take)
 - `getPendingFees` view for uncheckpointed fees
+- Custom tick ranges (`addLiquidityWithRange`, liquidity UI presets)
+- Example `DynamicFeeHook` (`getSwapFee` override)
+- EIP-1153 transient lock / currency deltas / synced reserves (`tstore`/`tload`)
+- `PositionManager` ERC-721 LP NFTs keyed by `salt = tokenId`
 
 ## Next extensions
 
-- Custom tick ranges in the UI
-- Example dynamic-fee / custom-curve hooks
-- EIP-1153 transient delta storage
 - Closer ABI parity with official `@uniswap/v4-core`
+- Custom-curve hooks
+- Position NFT UI in the frontend

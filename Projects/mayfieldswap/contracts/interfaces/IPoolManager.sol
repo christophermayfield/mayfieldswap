@@ -106,4 +106,10 @@ interface IPoolManager {
         returns (uint128 amount0, uint128 amount1);
 
     function isInitialized(PoolId id) external view returns (bool);
+
+    function currencyDelta(Currency currency) external view returns (int256);
+
+    function nonzeroDeltaCount() external view returns (uint256);
+
+    function isUnlocked() external view returns (bool);
 }

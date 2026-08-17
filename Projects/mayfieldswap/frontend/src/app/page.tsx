@@ -65,9 +65,9 @@ export default function Home() {
           </div>
           <div className="bg-white/10 backdrop-blur-md rounded-2xl p-6">
             <div className="text-2xl mb-4">💰</div>
-            <h3 className="text-xl font-bold text-white mb-2">Collect swap fees</h3>
+            <h3 className="text-xl font-bold text-white mb-2">Concentrated ranges</h3>
             <p className="text-white/70">
-              LPs earn the 0.30% swap fee via fee-growth checkpoints. Collect anytime, or on remove.
+              Choose a tick range. Liquidity is active — and earns fees — only while the pool price is inside it.
             </p>
           </div>
           <div className="bg-white/10 backdrop-blur-md rounded-2xl p-6">

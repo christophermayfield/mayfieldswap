@@ -7,11 +7,18 @@ import { CONTRACT_ADDRESSES, ROUTER_ABI, ERC20_ABI } from '@/contracts/config';
 import { useTokenApproval } from '@/hooks/useTokenApproval';
 
 const CHAIN_ID = 31337;
+const TICK_SPACING = 60;
 
 const TOKENS = [
   { symbol: 'MF-A', address: CONTRACT_ADDRESSES[CHAIN_ID].TokenA, name: 'Mayfield A' },
   { symbol: 'MF-B', address: CONTRACT_ADDRESSES[CHAIN_ID].TokenB, name: 'Mayfield B' },
 ];
+
+type RangePreset = 'full' | 'narrow' | 'medium' | 'custom';
+
+function alignTick(tick: number, spacing = TICK_SPACING) {
+  return Math.trunc(tick / spacing) * spacing;
+}
 
 export default function LiquidityInterface() {
   const { address, isConnected } = useAccount();
@@ -20,11 +27,40 @@ export default function LiquidityInterface() {
   const [tokenB, setTokenB] = useState(TOKENS[1]);
   const [amountA, setAmountA] = useState('');
   const [amountB, setAmountB] = useState('');
+  const [preset, setPreset] = useState<RangePreset>('full');
+  const [customLower, setCustomLower] = useState('-600');
+  const [customUpper, setCustomUpper] = useState('600');
   const [error, setError] = useState<string | null>(null);
 
   const router = CONTRACT_ADDRESSES[CHAIN_ID].MayfieldRouter as `0x${string}`;
   const { writeContract, data: hash, isPending } = useWriteContract();
   const { isLoading: isConfirming, isSuccess: isConfirmed } = useWaitForTransactionReceipt({ hash });
+
+  const { data: fullRange } = useReadContract({
+    address: router,
+    abi: ROUTER_ABI,
+    functionName: 'fullRangeTicks',
+  });
+
+  const { data: poolState } = useReadContract({
+    address: router,
+    abi: ROUTER_ABI,
+    functionName: 'getPoolState',
+    args: [tokenA.address, tokenB.address],
+    query: { enabled: tokenA.address !== tokenB.address },
+  });
+
+  const [tickLower, tickUpper] = useMemo(() => {
+    const full = fullRange as [number, number] | undefined;
+    const fullLo = full ? Number(full[0]) : alignTick(-887272);
+    const fullHi = full ? Number(full[1]) : alignTick(887272);
+    if (preset === 'full') return [fullLo, fullHi];
+    if (preset === 'narrow') return [-120, 120];
+    if (preset === 'medium') return [-600, 600];
+    const lo = alignTick(Number(customLower) || 0);
+    const hi = alignTick(Number(customUpper) || 0);
+    return lo < hi ? [lo, hi] : [hi, lo];
+  }, [preset, customLower, customUpper, fullRange]);
 
   const amountAWei = useMemo(() => {
     try {
@@ -61,16 +97,16 @@ export default function LiquidityInterface() {
   const { data: lpBalance, refetch: refetchLp } = useReadContract({
     address: router,
     abi: ROUTER_ABI,
-    functionName: 'getLiquidity',
-    args: [tokenA.address, tokenB.address, address],
+    functionName: 'getLiquidityAt',
+    args: [tokenA.address, tokenB.address, address, tickLower, tickUpper],
     query: { enabled: !!address && tokenA.address !== tokenB.address },
   });
 
   const { data: pendingFees, refetch: refetchFees } = useReadContract({
     address: router,
     abi: ROUTER_ABI,
-    functionName: 'getPendingFees',
-    args: [tokenA.address, tokenB.address, address],
+    functionName: 'getPendingFeesAt',
+    args: [tokenA.address, tokenB.address, address, tickLower, tickUpper],
     query: { enabled: !!address && tokenA.address !== tokenB.address },
   });
 
@@ -111,7 +147,7 @@ export default function LiquidityInterface() {
   };
 
   const handleAddLiquidity = async () => {
-    if (!amountA || !amountB || !isConnected) return;
+    if ((!amountA && !amountB) || !isConnected) return;
     if (needsApproveA || needsApproveB) return;
 
     setError(null);
@@ -120,10 +156,12 @@ export default function LiquidityInterface() {
       await writeContract({
         address: router,
         abi: ROUTER_ABI,
-        functionName: 'addLiquidity',
+        functionName: 'addLiquidityWithRange',
         args: [
           tokenA.address,
           tokenB.address,
+          tickLower,
+          tickUpper,
           amountAWei,
           amountBWei,
           (amountAWei * 95n) / 100n,
@@ -136,7 +174,7 @@ export default function LiquidityInterface() {
       await refetchFees();
     } catch (e) {
       console.error(e);
-      setError('Add liquidity failed. Check balances and approvals.');
+      setError('Add liquidity failed. Check balances, range, and approvals.');
     }
   };
 
@@ -148,8 +186,18 @@ export default function LiquidityInterface() {
       await writeContract({
         address: router,
         abi: ROUTER_ABI,
-        functionName: 'removeLiquidity',
-        args: [tokenA.address, tokenB.address, (lpBalance as bigint) / 2n, 0n, 0n, address!, deadline],
+        functionName: 'removeLiquidityWithRange',
+        args: [
+          tokenA.address,
+          tokenB.address,
+          tickLower,
+          tickUpper,
+          (lpBalance as bigint) / 2n,
+          0n,
+          0n,
+          address!,
+          deadline,
+        ],
       });
       await refetchLp();
       await refetchFees();
@@ -167,13 +215,13 @@ export default function LiquidityInterface() {
       await writeContract({
         address: router,
         abi: ROUTER_ABI,
-        functionName: 'collectFees',
-        args: [tokenA.address, tokenB.address, address!, deadline],
+        functionName: 'collectFeesWithRange',
+        args: [tokenA.address, tokenB.address, tickLower, tickUpper, address!, deadline],
       });
       await refetchFees();
     } catch (e) {
       console.error(e);
-      setError('Collect fees failed. Fees may be zero until more swaps occur.');
+      setError('Collect fees failed. Fees may be zero until more swaps occur in this range.');
     }
   };
 
@@ -191,11 +239,73 @@ export default function LiquidityInterface() {
     : needsApproveB
       ? `Approve ${tokenB.symbol}`
       : 'Approve';
+  const currentTick = poolState ? Number((poolState as { tick: number }).tick ?? (poolState as [bigint, number, bigint])[1]) : null;
+  const inRange = currentTick !== null && currentTick >= tickLower && currentTick < tickUpper;
+  const canAdd = (amountAWei > 0n || amountBWei > 0n) && tokenA.address !== tokenB.address && tickLower < tickUpper;
 
   return (
     <div className="space-y-6">
       <h2 className="text-xl font-bold text-white mb-2">Liquidity</h2>
-      <p className="text-white/60 text-sm">Full-range concentrated liquidity (V4-style PoolManager)</p>
+      <p className="text-white/60 text-sm">
+        Concentrated liquidity: choose a tick range. Fees accrue only while the pool tick is inside it.
+      </p>
+
+      <div className="bg-white/5 rounded-xl p-4 space-y-2 text-sm">
+        <div className="flex justify-between">
+          <span className="text-white/70">Current tick</span>
+          <span className="text-white">{currentTick === null ? '—' : currentTick}</span>
+        </div>
+        <div className="flex justify-between">
+          <span className="text-white/70">Your range</span>
+          <span className="text-white">
+            {tickLower} → {tickUpper} {inRange ? '(in range)' : '(out of range)'}
+          </span>
+        </div>
+      </div>
+
+      <div className="flex flex-wrap gap-2">
+        {([
+          ['full', 'Full'],
+          ['narrow', 'Narrow'],
+          ['medium', 'Medium'],
+          ['custom', 'Custom'],
+        ] as const).map(([id, label]) => (
+          <button
+            key={id}
+            onClick={() => setPreset(id)}
+            className={`px-3 py-1 rounded-lg text-sm ${
+              preset === id ? 'bg-white text-gray-900' : 'bg-white/10 text-white'
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {preset === 'custom' ? (
+        <div className="grid grid-cols-2 gap-3">
+          <label className="text-xs text-white/60 space-y-1">
+            Tick lower
+            <input
+              type="number"
+              step={TICK_SPACING}
+              value={customLower}
+              onChange={(e) => setCustomLower(e.target.value)}
+              className="w-full bg-white/5 rounded-lg p-2 text-white text-sm outline-none"
+            />
+          </label>
+          <label className="text-xs text-white/60 space-y-1">
+            Tick upper
+            <input
+              type="number"
+              step={TICK_SPACING}
+              value={customUpper}
+              onChange={(e) => setCustomUpper(e.target.value)}
+              className="w-full bg-white/5 rounded-lg p-2 text-white text-sm outline-none"
+            />
+          </label>
+        </div>
+      ) : null}
 
       {(lpBalance as bigint | undefined) && lpBalance !== 0n ? (
         <div className="bg-white/5 rounded-xl p-4 space-y-3">
@@ -276,11 +386,14 @@ export default function LiquidityInterface() {
               />
             </div>
           ))}
+          <p className="text-white/50 text-xs">
+            Out-of-range positions are one-sided: below the range uses token0 only, above uses token1 only.
+          </p>
 
           {needsApproveA || needsApproveB ? (
             <button
               onClick={handleApprove}
-              disabled={!amountA || !amountB || busy || tokenA.address === tokenB.address}
+              disabled={!canAdd || busy}
               className="w-full bg-gradient-to-r from-amber-500 to-orange-600 disabled:from-gray-400 disabled:to-gray-500 text-white font-bold py-4 rounded-xl"
             >
               {approvalA.isApproving || approvalB.isApproving ? 'Approving...' : approveLabel}
@@ -288,7 +401,7 @@ export default function LiquidityInterface() {
           ) : (
             <button
               onClick={handleAddLiquidity}
-              disabled={!amountA || !amountB || busy || tokenA.address === tokenB.address}
+              disabled={!canAdd || busy}
               className="w-full bg-gradient-to-r from-emerald-500 to-teal-600 disabled:from-gray-400 disabled:to-gray-500 text-white font-bold py-4 rounded-xl"
             >
               {isPending || isConfirming ? 'Adding...' : 'Add Liquidity'}

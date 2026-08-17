@@ -55,4 +55,7 @@ interface IHooks {
         int256 amountSpecified,
         BalanceDelta calldata delta
     ) external returns (bytes4);
+
+    /// @notice Optional swap-fee override in pips. Return 0 to use the pool's initialized fee.
+    function getSwapFee(PoolKey calldata key) external view returns (uint24);
 }

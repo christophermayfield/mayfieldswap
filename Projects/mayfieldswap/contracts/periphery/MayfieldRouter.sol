@@ -86,15 +86,23 @@ contract MayfieldRouter is IUnlockCallback {
         require(msg.sender == WETH, "Router: WETH only");
     }
 
-    function defaultKey(address tokenA, address tokenB) public pure returns (PoolKey memory key) {
+    function poolKey(address tokenA, address tokenB, uint24 fee, int24 tickSpacing, address hooks)
+        public
+        pure
+        returns (PoolKey memory key)
+    {
         (address t0, address t1) = sort(tokenA, tokenB);
         key = PoolKey({
             currency0: Currency.wrap(t0),
             currency1: Currency.wrap(t1),
-            fee: DEFAULT_FEE,
-            tickSpacing: DEFAULT_TICK_SPACING,
-            hooks: address(0)
+            fee: fee,
+            tickSpacing: tickSpacing,
+            hooks: hooks
         });
+    }
+
+    function defaultKey(address tokenA, address tokenB) public pure returns (PoolKey memory key) {
+        return poolKey(tokenA, tokenB, DEFAULT_FEE, DEFAULT_TICK_SPACING, address(0));
     }
 
     function sort(address a, address b) public pure returns (address token0, address token1) {
@@ -107,13 +115,29 @@ contract MayfieldRouter is IUnlockCallback {
         tickUpper = (TickMath.MAX_TICK / DEFAULT_TICK_SPACING) * DEFAULT_TICK_SPACING;
     }
 
+    function alignTick(int24 tick, int24 spacing) public pure returns (int24) {
+        require(spacing > 0, "Router: spacing");
+        return (tick / spacing) * spacing;
+    }
+
     function positionSalt(address user) public pure returns (bytes32) {
         return bytes32(uint256(uint160(user)));
     }
 
     function initializePool(address tokenA, address tokenB, uint160 sqrtPriceX96) external returns (int24 tick) {
-        PoolKey memory key = defaultKey(tokenA, tokenB);
+        return poolManager.initialize(defaultKey(tokenA, tokenB), sqrtPriceX96);
+    }
+
+    function initializePoolKey(PoolKey memory key, uint160 sqrtPriceX96) external returns (int24 tick) {
         tick = poolManager.initialize(key, sqrtPriceX96);
+    }
+
+    function getPoolState(address tokenA, address tokenB)
+        external
+        view
+        returns (uint160 sqrtPriceX96, int24 tick, uint128 liquidity)
+    {
+        return poolManager.getSlot0(defaultKey(tokenA, tokenB).toId());
     }
 
     function swapExactTokensForTokens(
@@ -124,24 +148,19 @@ contract MayfieldRouter is IUnlockCallback {
         address recipient,
         uint256 deadline
     ) external ensure(deadline) returns (uint256 amountOut) {
-        PoolKey memory key = defaultKey(tokenIn, tokenOut);
-        bool zeroForOne = Currency.unwrap(key.currency0) == tokenIn;
-        bytes memory result = poolManager.unlock(
-            abi.encode(
-                Action.Swap,
-                abi.encode(
-                    SwapExactInputParams({
-                        key: key,
-                        zeroForOne: zeroForOne,
-                        amountIn: amountIn,
-                        amountOutMin: amountOutMin,
-                        recipient: recipient,
-                        payer: msg.sender
-                    })
-                )
-            )
-        );
-        amountOut = abi.decode(result, (uint256));
+        amountOut = _unlockSwap(defaultKey(tokenIn, tokenOut), tokenIn, amountIn, amountOutMin, recipient, msg.sender);
+    }
+
+    /// @notice Exact-input swap against an arbitrary PoolKey (fee / spacing / hooks).
+    function swapExactInputOnPool(
+        PoolKey memory key,
+        address tokenIn,
+        uint256 amountIn,
+        uint256 amountOutMin,
+        address recipient,
+        uint256 deadline
+    ) external ensure(deadline) returns (uint256 amountOut) {
+        amountOut = _unlockSwap(key, tokenIn, amountIn, amountOutMin, recipient, msg.sender);
     }
 
     function swapExactETHForTokens(address tokenOut, uint256 amountOutMin, address recipient, uint256 deadline)
@@ -210,33 +229,54 @@ contract MayfieldRouter is IUnlockCallback {
         address recipient,
         uint256 deadline
     ) external ensure(deadline) returns (uint256 amount0, uint256 amount1, uint128 liquidity) {
-        PoolKey memory key = defaultKey(tokenA, tokenB);
         (int24 tickLower, int24 tickUpper) = fullRangeTicks();
+        return addLiquidityWithRange(
+            tokenA,
+            tokenB,
+            tickLower,
+            tickUpper,
+            amountADesired,
+            amountBDesired,
+            amountAMin,
+            amountBMin,
+            recipient,
+            deadline
+        );
+    }
+
+    function addLiquidityWithRange(
+        address tokenA,
+        address tokenB,
+        int24 tickLower,
+        int24 tickUpper,
+        uint256 amountADesired,
+        uint256 amountBDesired,
+        uint256 amountAMin,
+        uint256 amountBMin,
+        address recipient,
+        uint256 deadline
+    ) public ensure(deadline) returns (uint256 amount0, uint256 amount1, uint128 liquidity) {
+        PoolKey memory key = defaultKey(tokenA, tokenB);
         (address token0,) = sort(tokenA, tokenB);
         uint256 amount0Desired = tokenA == token0 ? amountADesired : amountBDesired;
         uint256 amount1Desired = tokenA == token0 ? amountBDesired : amountADesired;
         uint256 amount0Min_ = tokenA == token0 ? amountAMin : amountBMin;
         uint256 amount1Min_ = tokenA == token0 ? amountBMin : amountAMin;
+        return _unlockAdd(key, tickLower, tickUpper, amount0Desired, amount1Desired, amount0Min_, amount1Min_, recipient);
+    }
 
-        bytes memory result = poolManager.unlock(
-            abi.encode(
-                Action.AddLiquidity,
-                abi.encode(
-                    AddLiquidityParams({
-                        key: key,
-                        tickLower: tickLower,
-                        tickUpper: tickUpper,
-                        amount0Desired: amount0Desired,
-                        amount1Desired: amount1Desired,
-                        amount0Min: amount0Min_,
-                        amount1Min: amount1Min_,
-                        recipient: recipient,
-                        payer: msg.sender
-                    })
-                )
-            )
-        );
-        (amount0, amount1, liquidity) = abi.decode(result, (uint256, uint256, uint128));
+    function addLiquidityOnPool(
+        PoolKey memory key,
+        int24 tickLower,
+        int24 tickUpper,
+        uint256 amount0Desired,
+        uint256 amount1Desired,
+        uint256 amount0Min,
+        uint256 amount1Min,
+        address recipient,
+        uint256 deadline
+    ) external ensure(deadline) returns (uint256 amount0, uint256 amount1, uint128 liquidity) {
+        return _unlockAdd(key, tickLower, tickUpper, amount0Desired, amount1Desired, amount0Min, amount1Min, recipient);
     }
 
     function removeLiquidity(
@@ -248,12 +288,27 @@ contract MayfieldRouter is IUnlockCallback {
         address recipient,
         uint256 deadline
     ) external ensure(deadline) returns (uint256 amount0, uint256 amount1) {
-        PoolKey memory key = defaultKey(tokenA, tokenB);
         (int24 tickLower, int24 tickUpper) = fullRangeTicks();
+        return removeLiquidityWithRange(
+            tokenA, tokenB, tickLower, tickUpper, liquidity, amountAMin, amountBMin, recipient, deadline
+        );
+    }
+
+    function removeLiquidityWithRange(
+        address tokenA,
+        address tokenB,
+        int24 tickLower,
+        int24 tickUpper,
+        uint128 liquidity,
+        uint256 amountAMin,
+        uint256 amountBMin,
+        address recipient,
+        uint256 deadline
+    ) public ensure(deadline) returns (uint256 amount0, uint256 amount1) {
+        PoolKey memory key = defaultKey(tokenA, tokenB);
         (address token0,) = sort(tokenA, tokenB);
         uint256 amount0Min = tokenA == token0 ? amountAMin : amountBMin;
         uint256 amount1Min = tokenA == token0 ? amountBMin : amountAMin;
-
         bytes memory result = poolManager.unlock(
             abi.encode(
                 Action.RemoveLiquidity,
@@ -275,8 +330,16 @@ contract MayfieldRouter is IUnlockCallback {
     }
 
     function getLiquidity(address tokenA, address tokenB, address owner) external view returns (uint128 liquidity) {
-        PoolKey memory key = defaultKey(tokenA, tokenB);
         (int24 tickLower, int24 tickUpper) = fullRangeTicks();
+        return getLiquidityAt(tokenA, tokenB, owner, tickLower, tickUpper);
+    }
+
+    function getLiquidityAt(address tokenA, address tokenB, address owner, int24 tickLower, int24 tickUpper)
+        public
+        view
+        returns (uint128 liquidity)
+    {
+        PoolKey memory key = defaultKey(tokenA, tokenB);
         (liquidity,,,,) =
             poolManager.getPosition(key.toId(), address(this), tickLower, tickUpper, positionSalt(owner));
     }
@@ -287,8 +350,16 @@ contract MayfieldRouter is IUnlockCallback {
         view
         returns (uint128 amount0, uint128 amount1)
     {
-        PoolKey memory key = defaultKey(tokenA, tokenB);
         (int24 tickLower, int24 tickUpper) = fullRangeTicks();
+        return getPendingFeesAt(tokenA, tokenB, owner, tickLower, tickUpper);
+    }
+
+    function getPendingFeesAt(address tokenA, address tokenB, address owner, int24 tickLower, int24 tickUpper)
+        public
+        view
+        returns (uint128 amount0, uint128 amount1)
+    {
+        PoolKey memory key = defaultKey(tokenA, tokenB);
         return poolManager.getPendingFees(key.toId(), address(this), tickLower, tickUpper, positionSalt(owner));
     }
 
@@ -298,8 +369,19 @@ contract MayfieldRouter is IUnlockCallback {
         ensure(deadline)
         returns (uint256 amount0, uint256 amount1)
     {
-        PoolKey memory key = defaultKey(tokenA, tokenB);
         (int24 tickLower, int24 tickUpper) = fullRangeTicks();
+        return collectFeesWithRange(tokenA, tokenB, tickLower, tickUpper, recipient, deadline);
+    }
+
+    function collectFeesWithRange(
+        address tokenA,
+        address tokenB,
+        int24 tickLower,
+        int24 tickUpper,
+        address recipient,
+        uint256 deadline
+    ) public ensure(deadline) returns (uint256 amount0, uint256 amount1) {
+        PoolKey memory key = defaultKey(tokenA, tokenB);
         bytes memory result = poolManager.unlock(
             abi.encode(
                 Action.CollectFees,
@@ -337,6 +419,65 @@ contract MayfieldRouter is IUnlockCallback {
         if (action == Action.RemoveLiquidity) return _remove(abi.decode(payload, (RemoveLiquidityParams)));
         if (action == Action.CollectFees) return _collect(abi.decode(payload, (CollectFeesParams)));
         revert("Router: action");
+    }
+
+    function _unlockSwap(
+        PoolKey memory key,
+        address tokenIn,
+        uint256 amountIn,
+        uint256 amountOutMin,
+        address recipient,
+        address payer
+    ) internal returns (uint256 amountOut) {
+        bool zeroForOne = Currency.unwrap(key.currency0) == tokenIn;
+        require(zeroForOne || Currency.unwrap(key.currency1) == tokenIn, "Router: token");
+        bytes memory result = poolManager.unlock(
+            abi.encode(
+                Action.Swap,
+                abi.encode(
+                    SwapExactInputParams({
+                        key: key,
+                        zeroForOne: zeroForOne,
+                        amountIn: amountIn,
+                        amountOutMin: amountOutMin,
+                        recipient: recipient,
+                        payer: payer
+                    })
+                )
+            )
+        );
+        amountOut = abi.decode(result, (uint256));
+    }
+
+    function _unlockAdd(
+        PoolKey memory key,
+        int24 tickLower,
+        int24 tickUpper,
+        uint256 amount0Desired,
+        uint256 amount1Desired,
+        uint256 amount0Min,
+        uint256 amount1Min,
+        address recipient
+    ) internal returns (uint256 amount0, uint256 amount1, uint128 liquidity) {
+        bytes memory result = poolManager.unlock(
+            abi.encode(
+                Action.AddLiquidity,
+                abi.encode(
+                    AddLiquidityParams({
+                        key: key,
+                        tickLower: tickLower,
+                        tickUpper: tickUpper,
+                        amount0Desired: amount0Desired,
+                        amount1Desired: amount1Desired,
+                        amount0Min: amount0Min,
+                        amount1Min: amount1Min,
+                        recipient: recipient,
+                        payer: msg.sender
+                    })
+                )
+            )
+        );
+        (amount0, amount1, liquidity) = abi.decode(result, (uint256, uint256, uint128));
     }
 
     function _swap(SwapExactInputParams memory p) internal returns (bytes memory) {
