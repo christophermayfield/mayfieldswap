@@ -38,3 +38,7 @@ During unlock, currency deltas accumulate in **EIP-1153 transient storage** (`ts
 ## Position NFTs
 
 `PositionManager` (symbol `MSLP`) wraps concentrated positions as ERC-721 tokens. Each NFT stores the pool `PoolKey` and tick range; the on-chain position uses `salt = bytes32(tokenId)` under the manager contract as locker. Owners can `mint`, `decreaseLiquidity`, `burn`, `collect`, and `transferFrom` — fee-collect rights follow the NFT holder. The router still supports direct `salt = address(user)` positions for simpler UX.
+
+## Pool inspector (frontend)
+
+The **Pool** tab reads `PoolManager.getSlot0`, `getFeeGrowthGlobals`, and router position views to show current tick/price, active liquidity, fee growth globals, effective swap fee (including hook override), and an in-range preview for a chosen tick band.
