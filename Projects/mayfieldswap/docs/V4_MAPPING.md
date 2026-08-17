@@ -28,6 +28,7 @@ MayfieldSwap was rewritten from a SushiSwap/Uniswap V2 Factory–Pair–Router d
 - EIP-1153 transient lock / currency deltas / synced reserves (`tstore`/`tload`)
 - `PositionManager` ERC-721 LP NFTs keyed by `salt = tokenId`
 - Position NFT UI tab (mint / collect / burn MSLP tokens)
+- Pool inspector UI (slot0, fee growth, range / in-range preview)
 
 ## Next extensions
 

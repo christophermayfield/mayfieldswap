@@ -133,6 +133,13 @@ export const ROUTER_ABI = [
 
 export const HOOK_ABI = [
   "function feePips() external view returns (uint24)",
+  "function getSwapFee(tuple(address currency0, address currency1, uint24 fee, int24 tickSpacing, address hooks) key) external view returns (uint24)",
+] as const;
+
+export const POOL_MANAGER_ABI = [
+  "function getSlot0(bytes32 id) external view returns (uint160 sqrtPriceX96, int24 tick, uint128 liquidity)",
+  "function getFeeGrowthGlobals(bytes32 id) external view returns (uint256 feeGrowthGlobal0X128, uint256 feeGrowthGlobal1X128)",
+  "function isInitialized(bytes32 id) external view returns (bool)",
 ] as const;
 
 export const POSITION_MANAGER_ABI = [

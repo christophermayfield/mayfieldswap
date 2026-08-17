@@ -4,15 +4,17 @@ import { ConnectButton } from '@rainbow-me/rainbowkit';
 import SwapInterface from '@/components/SwapInterface';
 import LiquidityInterface from '@/components/LiquidityInterface';
 import PositionNFTInterface from '@/components/PositionNFTInterface';
+import PoolInspectorInterface from '@/components/PoolInspectorInterface';
 import { useState } from 'react';
 
 export default function Home() {
-  const [activeTab, setActiveTab] = useState<'swap' | 'liquidity' | 'positions'>('swap');
+  const [activeTab, setActiveTab] = useState<'swap' | 'liquidity' | 'positions' | 'inspect'>('swap');
 
   const tabs = [
     ['swap', 'Swap'],
-    ['liquidity', 'Liquidity'],
+    ['liquidity', 'Liq'],
     ['positions', 'NFTs'],
+    ['inspect', 'Pool'],
   ] as const;
 
   return (
@@ -52,8 +54,10 @@ export default function Home() {
               <SwapInterface />
             ) : activeTab === 'liquidity' ? (
               <LiquidityInterface />
-            ) : (
+            ) : activeTab === 'positions' ? (
               <PositionNFTInterface />
+            ) : (
+              <PoolInspectorInterface />
             )}
           </div>
         </div>
