@@ -3,10 +3,19 @@
 import { ConnectButton } from '@rainbow-me/rainbowkit';
 import SwapInterface from '@/components/SwapInterface';
 import LiquidityInterface from '@/components/LiquidityInterface';
+import PositionNFTInterface from '@/components/PositionNFTInterface';
+import PoolInspectorInterface from '@/components/PoolInspectorInterface';
 import { useState } from 'react';
 
 export default function Home() {
-  const [activeTab, setActiveTab] = useState<'swap' | 'liquidity'>('swap');
+  const [activeTab, setActiveTab] = useState<'swap' | 'liquidity' | 'positions' | 'inspect'>('swap');
+
+  const tabs = [
+    ['swap', 'Swap'],
+    ['liquidity', 'Liq'],
+    ['positions', 'NFTs'],
+    ['inspect', 'Pool'],
+  ] as const;
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-900 via-purple-900 to-indigo-900">
@@ -25,32 +34,31 @@ export default function Home() {
           {/* Tab Navigation */}
           <div className="bg-white/10 backdrop-blur-md rounded-2xl p-1 mb-6">
             <div className="flex">
-              <button
-                onClick={() => setActiveTab('swap')}
-                className={`flex-1 py-3 px-6 rounded-xl text-sm font-medium transition-all ${
-                  activeTab === 'swap'
-                    ? 'bg-white text-gray-900'
-                    : 'text-white/70 hover:text-white'
-                }`}
-              >
-                Swap
-              </button>
-              <button
-                onClick={() => setActiveTab('liquidity')}
-                className={`flex-1 py-3 px-6 rounded-xl text-sm font-medium transition-all ${
-                  activeTab === 'liquidity'
-                    ? 'bg-white text-gray-900'
-                    : 'text-white/70 hover:text-white'
-                }`}
-              >
-                Liquidity
-              </button>
+              {tabs.map(([id, label]) => (
+                <button
+                  key={id}
+                  onClick={() => setActiveTab(id)}
+                  className={`flex-1 py-3 px-4 rounded-xl text-sm font-medium transition-all ${
+                    activeTab === id ? 'bg-white text-gray-900' : 'text-white/70 hover:text-white'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
             </div>
           </div>
 
           {/* Interface Content */}
           <div className="bg-white/10 backdrop-blur-md rounded-2xl p-6">
-            {activeTab === 'swap' ? <SwapInterface /> : <LiquidityInterface />}
+            {activeTab === 'swap' ? (
+              <SwapInterface />
+            ) : activeTab === 'liquidity' ? (
+              <LiquidityInterface />
+            ) : activeTab === 'positions' ? (
+              <PositionNFTInterface />
+            ) : (
+              <PoolInspectorInterface />
+            )}
           </div>
         </div>
 
@@ -65,9 +73,16 @@ export default function Home() {
           </div>
           <div className="bg-white/10 backdrop-blur-md rounded-2xl p-6">
             <div className="text-2xl mb-4">💰</div>
-            <h3 className="text-xl font-bold text-white mb-2">Collect swap fees</h3>
+            <h3 className="text-xl font-bold text-white mb-2">Concentrated ranges</h3>
             <p className="text-white/70">
-              LPs earn the 0.30% swap fee via fee-growth checkpoints. Collect anytime, or on remove.
+              Choose a tick range. Liquidity is active — and earns fees — only while the pool price is inside it.
+            </p>
+          </div>
+          <div className="bg-white/10 backdrop-blur-md rounded-2xl p-6">
+            <div className="text-2xl mb-4">🎫</div>
+            <h3 className="text-xl font-bold text-white mb-2">LP NFTs</h3>
+            <p className="text-white/70">
+              Wrap concentrated positions as MSLP tokens — transferable fee rights, V4 PositionManager style.
             </p>
           </div>
           <div className="bg-white/10 backdrop-blur-md rounded-2xl p-6">

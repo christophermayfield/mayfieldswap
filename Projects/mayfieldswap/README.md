@@ -5,6 +5,7 @@ Uniswap **V4–style** educational DEX: singleton `PoolManager`, concentrated li
 ## Stack
 
 - **Solidity 0.8.26** (Cancun / EIP-1153) + Hardhat
+- **Solidity 0.8.28** (Cancun / EIP-1153) + Hardhat
 - **Next.js** frontend (wagmi + RainbowKit)
 - Local chain `31337`
 
@@ -14,9 +15,10 @@ Uniswap **V4–style** educational DEX: singleton `PoolManager`, concentrated li
 |---|---|
 | `PoolManager` | Singleton pools, `unlock`, `modifyLiquidity`, `swap`, `settle`/`take`, transient deltas |
 | `Pool` library | Concentrated liquidity + LP fee growth (`feeGrowthGlobal`, ticks, positions) |
-| `MayfieldRouter` | Periphery via `IUnlockCallback` (swap, liquidity, `collectFees`) |
+| `MayfieldRouter` | Periphery via `IUnlockCallback` (swap, ranged liquidity, `collectFees`) |
+| `PositionManager` | ERC-721 LP positions (tick range + pool key per token id) |
 | `Quoter` | Exact-input quotes via eth_call + revert |
-| `EmptyHooks` | No-op `IHooks` implementation |
+| `EmptyHooks` / `DynamicFeeHook` | No-op hooks, or owner-settable swap-fee override |
 
 Pools are identified by `PoolKey` `(currency0, currency1, fee, tickSpacing, hooks)`.
 

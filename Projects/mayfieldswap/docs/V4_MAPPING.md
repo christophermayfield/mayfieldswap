@@ -11,7 +11,7 @@ MayfieldSwap was rewritten from a SushiSwap/Uniswap V2 Factory–Pair–Router d
 | Tokens held in pairs | Tokens held in manager; flash accounting |
 | Pair `lock` | `unlock` + `unlockCallback` |
 | No hooks | `IHooks` |
-| ERC-20 LP tokens per pair | Router-tracked liquidity shares (full-range UX) |
+| ERC-20 LP tokens per pair | ERC-721 positions (`PositionManager`) or router `salt` positions |
 
 ## Intentional simplifications (educational)
 
@@ -30,3 +30,4 @@ MayfieldSwap was rewritten from a SushiSwap/Uniswap V2 Factory–Pair–Router d
 - Custom tick ranges in the UI
 - Example dynamic-fee / custom-curve hooks
 - Closer ABI parity with official `@uniswap/v4-core`
+- Custom-curve hooks
