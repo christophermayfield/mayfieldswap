@@ -82,11 +82,10 @@ describe("EIP-1153 flash accounting", function () {
 
   it("snapshots nonzero transient deltas during unlock, then settles to zero", async function () {
     const key = asKey(await router.defaultKey(tokenA.target, tokenB.target));
-    const token0IsA = key.currency0.toLowerCase() === tokenA.target.toLowerCase();
-    const zeroForOne = token0IsA;
-    const [deployer] = await ethers.getSigners();
-    await tokenA.connect(deployer).transfer(trader.address, ethers.parseEther("10"));
-    await tokenA.connect(trader).approve(harness.target, ethers.MaxUint256);
+    const zeroForOne = key.currency0.toLowerCase() === tokenA.target.toLowerCase();
+    const tokenIn = zeroForOne ? tokenA : tokenB;
+    await tokenIn.transfer(trader.address, ethers.parseEther("10"));
+    await tokenIn.connect(trader).approve(harness.target, ethers.MaxUint256);
 
     const payload = ethers.AbiCoder.defaultAbiCoder().encode(
       [

@@ -28,7 +28,6 @@
   "devDependencies": {
     "@nomicfoundation/hardhat-toolbox": "^4.0.0",
     "concurrently": "^9.2.0",
-    "hardhat": "^2.22.17",
-    "solc": "^0.8.28"
+    "hardhat": "^2.22.17"
   }
 }
