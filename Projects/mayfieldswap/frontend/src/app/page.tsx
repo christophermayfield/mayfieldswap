@@ -79,13 +79,6 @@ export default function Home() {
             </p>
           </div>
           <div className="bg-white/10 backdrop-blur-md rounded-2xl p-6">
-            <div className="text-2xl mb-4">🎫</div>
-            <h3 className="text-xl font-bold text-white mb-2">LP NFTs</h3>
-            <p className="text-white/70">
-              Wrap concentrated positions as MSLP tokens — transferable fee rights, V4 PositionManager style.
-            </p>
-          </div>
-          <div className="bg-white/10 backdrop-blur-md rounded-2xl p-6">
             <div className="text-2xl mb-4">🧪</div>
             <h3 className="text-xl font-bold text-white mb-2">Educational</h3>
             <p className="text-white/70">
