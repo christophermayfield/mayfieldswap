@@ -14,13 +14,20 @@
     "dev": "concurrently \"npm run node\" \"cd frontend && npm run dev\"",
     "setup": "npm install && cd frontend && npm install"
   },
-  "keywords": ["defi", "dex", "uniswap-v4", "amm", "solidity", "ethereum"],
+  "keywords": [
+    "defi",
+    "dex",
+    "uniswap-v4",
+    "amm",
+    "solidity",
+    "ethereum"
+  ],
   "author": "Christopher Mayfield",
   "license": "MIT",
   "type": "commonjs",
   "devDependencies": {
     "@nomicfoundation/hardhat-toolbox": "^4.0.0",
     "concurrently": "^9.2.0",
-    "hardhat": "^2.19.5"
+    "hardhat": "^2.22.17"
   }
 }
