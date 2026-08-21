@@ -2,14 +2,14 @@
 
 import { getDefaultConfig, RainbowKitProvider } from '@rainbow-me/rainbowkit';
 import { WagmiProvider } from 'wagmi';
-import { hardhat, mainnet, polygon, optimism, arbitrum, base } from 'wagmi/chains';
+import { hardhat, mainnet, polygon, optimism, arbitrum, base, baseSepolia } from 'wagmi/chains';
 import { QueryClientProvider, QueryClient } from '@tanstack/react-query';
 import '@rainbow-me/rainbowkit/styles.css';
 
 const config = getDefaultConfig({
   appName: 'MayfieldSwap DEX',
-  projectId: 'YOUR_PROJECT_ID', // Get this from WalletConnect Cloud
-  chains: [hardhat, mainnet, polygon, optimism, arbitrum, base],
+  projectId: process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID || 'YOUR_PROJECT_ID',
+  chains: [baseSepolia, hardhat, mainnet, polygon, optimism, arbitrum, base],
   ssr: true,
 });
 

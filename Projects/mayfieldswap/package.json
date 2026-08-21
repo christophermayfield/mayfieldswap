@@ -9,6 +9,8 @@
     "deploy": "hardhat run scripts/deploy-v4.js",
     "deploy:v4": "hardhat run scripts/deploy-v4.js",
     "deploy:localhost": "hardhat run scripts/deploy-v4.js --network localhost",
+    "deploy:baseSepolia": "hardhat run scripts/deploy-v4.js --network baseSepolia",
+    "verify:baseSepolia": "hardhat verify --network baseSepolia",
     "node": "hardhat node --hostname 127.0.0.1",
     "clean": "hardhat clean",
     "dev": "concurrently \"npm run node\" \"cd frontend && npm run dev\"",
@@ -28,6 +30,7 @@
   "devDependencies": {
     "@nomicfoundation/hardhat-toolbox": "^4.0.0",
     "concurrently": "^9.2.0",
+    "dotenv": "^16.0.0",
     "hardhat": "^2.22.17"
   }
 }

@@ -37,8 +37,22 @@ MetaMask: RPC `http://127.0.0.1:8545`, chain ID `31337`.
 ```bash
 npm test
 npm run compile
-npm run deploy:v4
+npm run deploy:v4            # local
+npm run deploy:baseSepolia   # testnet
+npm run verify:baseSepolia   # verify on Basescan
 ```
+
+## Testnet deployment (Base Sepolia)
+
+```bash
+cp .env.example .env         # fill in PRIVATE_KEY, BASE_SEPOLIA_RPC_URL, BASESCAN_API_KEY
+npm install
+npm run deploy:baseSepolia
+```
+
+After deployment, paste the printed addresses into `frontend/src/contracts/config.ts` under key `84532`.
+
+Get testnet ETH from the Base Sepolia faucet before deploying.
 
 ## Layout
 
