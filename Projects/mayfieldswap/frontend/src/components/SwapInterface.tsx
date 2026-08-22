@@ -30,16 +30,61 @@ function formatFeePips(pips: number) {
   return `${(pips / 10_000).toFixed(2)}%`;
 }
 
+// ─── Gear icon ────────────────────────────────────────────────────────────────
+function GearIcon() {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none"
+      stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="3" />
+      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33
+               1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33
+               l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09
+               A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9
+               4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06
+               a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09
+               a1.65 1.65 0 0 0-1.51 1z" />
+    </svg>
+  );
+}
+
 export default function SwapInterface() {
   const { address, isConnected } = useAccount();
   const publicClient = usePublicClient();
+
   const [poolMode, setPoolMode] = useState<PoolMode>('standard');
   const [fromToken, setFromToken] = useState(ALL_TOKENS[1]);
   const [toToken, setToToken] = useState(ALL_TOKENS[2]);
   const [fromAmount, setFromAmount] = useState('');
   const [toAmount, setToAmount] = useState('');
-  const [slippage, setSlippage] = useState('0.5');
   const [error, setError] = useState<string | null>(null);
+
+  // ── Settings panel ──────────────────────────────────────────────────────────
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [slippage, setSlippage] = useState('0.5');
+  const [customSlippage, setCustomSlippage] = useState('');
+  const [deadlineMinutes, setDeadlineMinutes] = useState(5);
+
+  // ── Multi-hop route ─────────────────────────────────────────────────────────
+  const [multihopPath, setMultihopPath] = useState<`0x${string}`[] | null>(null);
+
+  // ── Restore settings from localStorage on mount ─────────────────────────────
+  useEffect(() => {
+    try {
+      const savedSlippage = localStorage.getItem('ms_slippage');
+      const savedDeadline = localStorage.getItem('ms_deadline_minutes');
+      if (savedSlippage) setSlippage(savedSlippage);
+      if (savedDeadline) setDeadlineMinutes(Number(savedDeadline));
+    } catch {}
+  }, []);
+
+  // ── Persist settings ─────────────────────────────────────────────────────────
+  useEffect(() => {
+    try { localStorage.setItem('ms_slippage', slippage); } catch {}
+  }, [slippage]);
+
+  useEffect(() => {
+    try { localStorage.setItem('ms_deadline_minutes', String(deadlineMinutes)); } catch {}
+  }, [deadlineMinutes]);
 
   const router = CONTRACT_ADDRESSES[CHAIN_ID].MayfieldRouter as `0x${string}`;
   const quoter = CONTRACT_ADDRESSES[CHAIN_ID].Quoter as `0x${string}`;
@@ -76,11 +121,7 @@ export default function SwapInterface() {
 
   const needsApproval = fromToken.address !== 'ETH' && amountIn > 0n;
 
-  const {
-    hasAllowance,
-    approve,
-    isApproving,
-  } = useTokenApproval({
+  const { hasAllowance, approve, isApproving } = useTokenApproval({
     token: needsApproval ? (fromToken.address as `0x${string}`) : undefined,
     owner: address,
     spender: router,
@@ -124,17 +165,22 @@ export default function SwapInterface() {
     query: { enabled: poolMode === 'hooked' && hookDeployed },
   });
 
+  // ── Quote with multi-hop fallback ────────────────────────────────────────────
   useEffect(() => {
     let cancelled = false;
     async function quote() {
       if (!publicClient || !activePoolKey || !fromAmount || parseFloat(fromAmount) <= 0) {
         setToAmount('');
+        setMultihopPath(null);
         return;
       }
+
       const tokenIn = fromToken.address === 'ETH' ? weth : (fromToken.address as `0x${string}`);
       const zeroForOne = activePoolKey.currency0.toLowerCase() === tokenIn.toLowerCase();
+
+      // 1. Try direct quote
       try {
-        const amountOut = (
+        const directOut = (
           await publicClient.simulateContract({
             address: quoter,
             abi: QUOTER_ABI,
@@ -142,16 +188,55 @@ export default function SwapInterface() {
             args: [activePoolKey, zeroForOne, parseEther(fromAmount)],
           })
         ).result as bigint;
-        if (!cancelled) setToAmount(formatEther(amountOut));
+
+        if (directOut > 0n) {
+          if (!cancelled) {
+            setToAmount(formatEther(directOut));
+            setMultihopPath(null);
+          }
+          return;
+        }
       } catch {
-        if (!cancelled) setToAmount('');
+        // Direct quote failed — fall through to multi-hop
+      }
+
+      // 2. Try WETH multi-hop (only for ERC-20 ↔ ERC-20, not involving WETH already)
+      const fromAddr = fromToken.address;
+      const toAddr   = toToken.address;
+      const wethLc   = weth.toLowerCase();
+      if (
+        fromAddr !== 'ETH' && toAddr !== 'ETH' &&
+        fromAddr.toLowerCase() !== wethLc && toAddr.toLowerCase() !== wethLc
+      ) {
+        const path = [fromAddr as `0x${string}`, weth, toAddr as `0x${string}`];
+        try {
+          const hopOut = (
+            await publicClient.simulateContract({
+              address: quoter,
+              abi: QUOTER_ABI,
+              functionName: 'quoteExactPath',
+              args: [path, parseEther(fromAmount)],
+            })
+          ).result as bigint;
+
+          if (hopOut > 0n && !cancelled) {
+            setToAmount(formatEther(hopOut));
+            setMultihopPath(path);
+            return;
+          }
+        } catch {
+          // Multi-hop also failed
+        }
+      }
+
+      if (!cancelled) {
+        setToAmount('');
+        setMultihopPath(null);
       }
     }
     void quote();
-    return () => {
-      cancelled = true;
-    };
-  }, [publicClient, activePoolKey, fromAmount, fromToken, quoter, weth]);
+    return () => { cancelled = true; };
+  }, [publicClient, activePoolKey, fromAmount, fromToken, toToken, quoter, weth]);
 
   const handleApprove = async () => {
     setError(null);
@@ -168,11 +253,22 @@ export default function SwapInterface() {
     if (needsApproval && !hasAllowance) return;
 
     setError(null);
-    const deadline = BigInt(Math.floor(Date.now() / 1000) + 300);
+    const deadline = BigInt(Math.floor(Date.now() / 1000) + deadlineMinutes * 60);
     const amountOutMin =
       (parseEther(toAmount || '0') * BigInt(Math.floor((100 - parseFloat(slippage)) * 100))) / 10000n;
 
     try {
+      // Multi-hop swap
+      if (multihopPath) {
+        await writeContract({
+          address: router,
+          abi: ROUTER_ABI,
+          functionName: 'swapExactPath',
+          args: [multihopPath, amountIn, amountOutMin, address!, deadline],
+        });
+        return;
+      }
+
       if (poolMode === 'hooked') {
         const tokenIn = fromToken.address as `0x${string}`;
         await writeContract({
@@ -224,6 +320,8 @@ export default function SwapInterface() {
   const busy = isPending || isConfirming || isApproving;
   const showApprove = needsApproval && !hasAllowance;
   const hookedUnavailable = poolMode === 'hooked' && !hookDeployed;
+  const slippageNum = parseFloat(slippage) || 0;
+  const highSlippage = slippageNum > 5;
   const poolFeeLabel =
     poolMode === 'standard'
       ? '0.30% (default pool)'
@@ -231,9 +329,98 @@ export default function SwapInterface() {
         ? `${formatFeePips(Number(hookFeePips))} (DynamicFeeHook)`
         : 'DynamicFeeHook';
 
+  const effectiveSlippage = customSlippage !== '' ? customSlippage : slippage;
+
   return (
     <div className="space-y-4">
-      <h2 className="text-xl font-bold text-white mb-6">Swap</h2>
+      {/* Header with gear */}
+      <div className="flex justify-between items-center mb-6">
+        <h2 className="text-xl font-bold text-white">Swap</h2>
+        <button
+          onClick={() => setSettingsOpen((o) => !o)}
+          className={`p-2 rounded-lg transition-colors ${settingsOpen ? 'bg-white/20 text-white' : 'text-white/50 hover:text-white hover:bg-white/10'}`}
+          title="Swap settings"
+        >
+          <GearIcon />
+        </button>
+      </div>
+
+      {/* Settings panel */}
+      {settingsOpen && (
+        <div className="bg-white/5 rounded-xl p-4 space-y-4 border border-white/10">
+          {/* Slippage */}
+          <div>
+            <div className="flex justify-between items-center mb-2">
+              <span className="text-sm text-white/70">Slippage tolerance</span>
+              {highSlippage && (
+                <span className="text-xs bg-yellow-500/20 text-yellow-300 px-2 py-0.5 rounded-full">
+                  High slippage
+                </span>
+              )}
+            </div>
+            <div className="flex gap-2 items-center">
+              {['0.1', '0.5', '1.0'].map((value) => (
+                <button
+                  key={value}
+                  onClick={() => { setSlippage(value); setCustomSlippage(''); }}
+                  className={`px-3 py-1.5 rounded-lg text-sm ${
+                    slippage === value && customSlippage === '' ? 'bg-white text-gray-900' : 'bg-white/10 text-white'
+                  }`}
+                >
+                  {value}%
+                </button>
+              ))}
+              <div className="flex-1 relative">
+                <input
+                  type="number"
+                  value={customSlippage}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setCustomSlippage(v);
+                    if (v !== '' && parseFloat(v) >= 0.01 && parseFloat(v) <= 50) {
+                      setSlippage(v);
+                    }
+                  }}
+                  placeholder="Custom"
+                  min="0.01"
+                  max="50"
+                  className="w-full bg-white/10 text-white text-sm rounded-lg px-3 py-1.5 outline-none placeholder-white/30 pr-6"
+                />
+                <span className="absolute right-2 top-1/2 -translate-y-1/2 text-white/40 text-sm">%</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Deadline */}
+          <div>
+            <span className="text-sm text-white/70 block mb-2">Transaction deadline</span>
+            <div className="flex items-center gap-2">
+              <input
+                type="number"
+                value={deadlineMinutes}
+                onChange={(e) => {
+                  const v = Math.max(1, Math.min(60, Number(e.target.value)));
+                  setDeadlineMinutes(v);
+                }}
+                min="1"
+                max="60"
+                className="w-20 bg-white/10 text-white text-sm rounded-lg px-3 py-1.5 outline-none text-center"
+              />
+              <span className="text-sm text-white/50">minutes</span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Slippage display when panel is closed */}
+      {!settingsOpen && (
+        <div className="flex justify-between items-center text-sm">
+          <span className="text-white/50 text-xs">
+            Slippage {effectiveSlippage}% · Deadline {deadlineMinutes}m
+            {highSlippage && <span className="ml-2 text-yellow-300">⚠ High</span>}
+          </span>
+        </div>
+      )}
 
       <div className="space-y-2">
         <label className="text-sm text-white/70">Pool</label>
@@ -301,6 +488,7 @@ export default function SwapInterface() {
             setToToken(fromToken);
             setFromAmount(toAmount);
             setToAmount(fromAmount);
+            setMultihopPath(null);
           }}
           className="bg-white/10 hover:bg-white/20 rounded-full p-2 transition-colors"
         >
@@ -332,22 +520,12 @@ export default function SwapInterface() {
         </div>
       </div>
 
-      <div className="flex justify-between items-center text-sm">
-        <span className="text-white/70">Slippage</span>
-        <div className="flex space-x-2">
-          {['0.1', '0.5', '1.0'].map((value) => (
-            <button
-              key={value}
-              onClick={() => setSlippage(value)}
-              className={`px-3 py-1 rounded-lg ${
-                slippage === value ? 'bg-white text-gray-900' : 'bg-white/10 text-white'
-              }`}
-            >
-              {value}%
-            </button>
-          ))}
+      {/* Route indicator */}
+      {multihopPath && (
+        <div className="text-xs text-cyan-400 bg-cyan-400/10 rounded-lg px-3 py-2">
+          Route: {fromToken.symbol} → WETH → {toToken.symbol}
         </div>
-      </div>
+      )}
 
       {showApprove ? (
         <button

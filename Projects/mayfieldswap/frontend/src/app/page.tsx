@@ -5,16 +5,21 @@ import SwapInterface from '@/components/SwapInterface';
 import LiquidityInterface from '@/components/LiquidityInterface';
 import PositionNFTInterface from '@/components/PositionNFTInterface';
 import PoolInspectorInterface from '@/components/PoolInspectorInterface';
+import PriceChart from '@/components/PriceChart';
 import { useState } from 'react';
+import { CONTRACT_ADDRESSES } from '@/contracts/config';
+
+const CHAIN_ID = 31337;
 
 export default function Home() {
-  const [activeTab, setActiveTab] = useState<'swap' | 'liquidity' | 'positions' | 'inspect'>('swap');
+  const [activeTab, setActiveTab] = useState<'swap' | 'liquidity' | 'positions' | 'inspect' | 'chart'>('swap');
 
   const tabs = [
     ['swap', 'Swap'],
     ['liquidity', 'Liq'],
     ['positions', 'NFTs'],
     ['inspect', 'Pool'],
+    ['chart', 'Chart'],
   ] as const;
 
   return (
@@ -30,7 +35,7 @@ export default function Home() {
 
       {/* Main Content */}
       <main className="container mx-auto px-6 py-8">
-        <div className="max-w-md mx-auto">
+        <div className={`mx-auto ${activeTab === 'chart' ? 'max-w-2xl' : 'max-w-md'}`}>
           {/* Tab Navigation */}
           <div className="bg-white/10 backdrop-blur-md rounded-2xl p-1 mb-6">
             <div className="flex">
@@ -49,13 +54,21 @@ export default function Home() {
           </div>
 
           {/* Interface Content */}
-          <div className="bg-white/10 backdrop-blur-md rounded-2xl p-6">
+          <div className={`bg-white/10 backdrop-blur-md rounded-2xl p-6 ${activeTab === 'chart' ? 'max-w-2xl' : ''}`}>
             {activeTab === 'swap' ? (
               <SwapInterface />
             ) : activeTab === 'liquidity' ? (
               <LiquidityInterface />
             ) : activeTab === 'positions' ? (
               <PositionNFTInterface />
+            ) : activeTab === 'chart' ? (
+              <PriceChart
+                poolManagerAddress={CONTRACT_ADDRESSES[CHAIN_ID].PoolManager as `0x${string}`}
+                token0Address={CONTRACT_ADDRESSES[CHAIN_ID].TokenA as `0x${string}`}
+                token1Address={CONTRACT_ADDRESSES[CHAIN_ID].TokenB as `0x${string}`}
+                token0Symbol="MF-A"
+                token1Symbol="MF-B"
+              />
             ) : (
               <PoolInspectorInterface />
             )}

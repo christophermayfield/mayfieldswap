@@ -151,6 +151,27 @@ contract MayfieldRouter is IUnlockCallback {
         amountOut = _unlockSwap(defaultKey(tokenIn, tokenOut), tokenIn, amountIn, amountOutMin, recipient, msg.sender);
     }
 
+    /// @notice Multi-hop exact-input swap through a sequence of default pools.
+    /// @param path  Ordered token addresses: path[0] is sold, path[last] is received.
+    function swapExactPath(
+        address[] calldata path,
+        uint256 amountIn,
+        uint256 amountOutMin,
+        address to,
+        uint256 deadline
+    ) external ensure(deadline) returns (uint256 amountOut) {
+        require(path.length >= 2, "Router: path");
+        uint256 current = amountIn;
+        for (uint256 i = 0; i < path.length - 1; i++) {
+            bool isLast = i == path.length - 2;
+            address recipient = isLast ? to : address(this);
+            address payer    = i == 0   ? msg.sender : address(this);
+            current = _unlockSwap(defaultKey(path[i], path[i + 1]), path[i], current, 0, recipient, payer);
+        }
+        amountOut = current;
+        require(amountOut >= amountOutMin, "Router: slippage");
+    }
+
     /// @notice Exact-input swap against an arbitrary PoolKey (fee / spacing / hooks).
     function swapExactInputOnPool(
         PoolKey memory key,

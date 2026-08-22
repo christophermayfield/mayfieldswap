@@ -35,6 +35,7 @@ export const ROUTER_ABI = [
   "function swapExactTokensForTokens(address tokenIn, address tokenOut, uint256 amountIn, uint256 amountOutMin, address recipient, uint256 deadline) external returns (uint256 amountOut)",
   "function swapExactETHForTokens(address tokenOut, uint256 amountOutMin, address recipient, uint256 deadline) external payable returns (uint256 amountOut)",
   "function swapExactTokensForETH(address tokenIn, uint256 amountIn, uint256 amountOutMin, address recipient, uint256 deadline) external returns (uint256 amountOut)",
+  "function swapExactPath(address[] calldata path, uint256 amountIn, uint256 amountOutMin, address to, uint256 deadline) external returns (uint256 amountOut)",
   "function addLiquidity(address tokenA, address tokenB, uint256 amountADesired, uint256 amountBDesired, uint256 amountAMin, uint256 amountBMin, address recipient, uint256 deadline) external returns (uint256 amount0, uint256 amount1, uint128 liquidity)",
   "function addLiquidityWithRange(address tokenA, address tokenB, int24 tickLower, int24 tickUpper, uint256 amountADesired, uint256 amountBDesired, uint256 amountAMin, uint256 amountBMin, address recipient, uint256 deadline) external returns (uint256 amount0, uint256 amount1, uint128 liquidity)",
   "function removeLiquidity(address tokenA, address tokenB, uint128 liquidity, uint256 amountAMin, uint256 amountBMin, address recipient, uint256 deadline) external returns (uint256 amount0, uint256 amount1)",
@@ -61,6 +62,7 @@ export const POOL_MANAGER_ABI = [
   "function getSlot0(bytes32 id) external view returns (uint160 sqrtPriceX96, int24 tick, uint128 liquidity)",
   "function getFeeGrowthGlobals(bytes32 id) external view returns (uint256 feeGrowthGlobal0X128, uint256 feeGrowthGlobal1X128)",
   "function isInitialized(bytes32 id) external view returns (bool)",
+  "event Swap(bytes32 indexed id, address indexed sender, int256 amount0, int256 amount1, uint160 sqrtPriceX96, uint128 liquidity, int24 tick)",
 ] as const;
 
 export const POSITION_MANAGER_ABI = [
@@ -82,6 +84,7 @@ export const POSITION_MANAGER_ABI = [
 
 export const QUOTER_ABI = [
   "function quoteExactInput(tuple(address currency0, address currency1, uint24 fee, int24 tickSpacing, address hooks) key, bool zeroForOne, uint256 amountIn) external returns (uint256 amountOut)",
+  "function quoteExactPath(address[] calldata path, uint256 amountIn) external returns (uint256 amountOut)",
 ] as const;
 
 export const ERC20_ABI = [
