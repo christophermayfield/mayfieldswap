@@ -25,6 +25,19 @@ contract MayfieldRouter is IUnlockCallback {
     uint24 public constant DEFAULT_FEE = 3000;
     int24 public constant DEFAULT_TICK_SPACING = 60;
 
+    // ─── Protocol fee ─────────────────────────────────────────────────────────
+
+    address public owner;
+    /// @dev Fee in basis points deducted from every swap output (max 100 = 1%).
+    uint24  public protocolFeeBps;
+    address public feeRecipient;
+    /// @dev Accumulated protocol fees per token, claimable by owner.
+    mapping(address => uint256) public accruedFees;
+
+    event ProtocolFeeSet(uint24 bps);
+    event FeeRecipientSet(address recipient);
+    event ProtocolFeesCollected(address indexed token, uint256 amount, address recipient);
+
     enum Action {
         Swap,
         AddLiquidity,
@@ -77,9 +90,43 @@ contract MayfieldRouter is IUnlockCallback {
         _;
     }
 
+    modifier onlyOwner() {
+        require(msg.sender == owner, "Router: not owner");
+        _;
+    }
+
     constructor(address _poolManager, address _weth) {
         poolManager = IPoolManager(_poolManager);
         WETH = _weth;
+        owner = msg.sender;
+    }
+
+    // ─── Protocol fee admin ───────────────────────────────────────────────────
+
+    /// @notice Set the protocol fee. Max 100 bps (1%). Set to 0 to disable.
+    function setProtocolFee(uint24 bps) external onlyOwner {
+        require(bps <= 100, "Router: max fee 1%");
+        protocolFeeBps = bps;
+        emit ProtocolFeeSet(bps);
+    }
+
+    function setFeeRecipient(address recipient) external onlyOwner {
+        feeRecipient = recipient;
+        emit FeeRecipientSet(recipient);
+    }
+
+    function transferOwnership(address newOwner) external onlyOwner {
+        require(newOwner != address(0), "Router: zero owner");
+        owner = newOwner;
+    }
+
+    /// @notice Withdraw accumulated protocol fees to feeRecipient.
+    function collectProtocolFees(address token) external onlyOwner returns (uint256 amount) {
+        amount = accruedFees[token];
+        require(amount > 0, "Router: no fees");
+        accruedFees[token] = 0;
+        TransferHelper.safeTransfer(token, feeRecipient, amount);
+        emit ProtocolFeesCollected(token, amount, feeRecipient);
     }
 
     receive() external payable {
@@ -513,14 +560,26 @@ contract MayfieldRouter is IUnlockCallback {
             ""
         );
 
-        uint256 amountOut = p.zeroForOne ? uint256(int256(delta.amount1)) : uint256(int256(delta.amount0));
-        require(amountOut >= p.amountOutMin, "Router: slippage");
+        uint256 grossOut = p.zeroForOne ? uint256(int256(delta.amount1)) : uint256(int256(delta.amount0));
 
-        Currency input = p.zeroForOne ? p.key.currency0 : p.key.currency1;
+        // Deduct protocol fee from output before slippage check
+        uint256 fee = 0;
+        if (protocolFeeBps > 0 && feeRecipient != address(0)) {
+            fee = (grossOut * protocolFeeBps) / 10_000;
+        }
+        uint256 netOut = grossOut - fee;
+        require(netOut >= p.amountOutMin, "Router: slippage");
+
+        Currency input  = p.zeroForOne ? p.key.currency0 : p.key.currency1;
         Currency output = p.zeroForOne ? p.key.currency1 : p.key.currency0;
         _pay(input, p.payer, p.amountIn);
-        poolManager.take(output, p.recipient, amountOut);
-        return abi.encode(amountOut);
+
+        if (fee > 0) {
+            poolManager.take(output, address(this), fee);
+            accruedFees[Currency.unwrap(output)] += fee;
+        }
+        poolManager.take(output, p.recipient, netOut);
+        return abi.encode(netOut);
     }
 
     function _add(AddLiquidityParams memory p) internal returns (bytes memory) {
