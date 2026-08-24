@@ -52,6 +52,8 @@ contract MayfieldRouter is IUnlockCallback {
         uint256 amountOutMin;
         address recipient;
         address payer;
+        /// @dev When false, protocol fee is not deducted (used for intermediate hops in swapExactPath).
+        bool applyFee;
     }
 
     struct AddLiquidityParams {
@@ -111,6 +113,7 @@ contract MayfieldRouter is IUnlockCallback {
     }
 
     function setFeeRecipient(address recipient) external onlyOwner {
+        require(recipient != address(0), "Router: zero recipient");
         feeRecipient = recipient;
         emit FeeRecipientSet(recipient);
     }
@@ -200,6 +203,7 @@ contract MayfieldRouter is IUnlockCallback {
 
     /// @notice Multi-hop exact-input swap through a sequence of default pools.
     /// @param path  Ordered token addresses: path[0] is sold, path[last] is received.
+    /// @dev Protocol fee is applied once on the final hop only to prevent double-charging.
     function swapExactPath(
         address[] calldata path,
         uint256 amountIn,
@@ -213,7 +217,8 @@ contract MayfieldRouter is IUnlockCallback {
             bool isLast = i == path.length - 2;
             address recipient = isLast ? to : address(this);
             address payer    = i == 0   ? msg.sender : address(this);
-            current = _unlockSwap(defaultKey(path[i], path[i + 1]), path[i], current, 0, recipient, payer);
+            // Only charge the protocol fee on the final hop
+            current = _unlockSwap(defaultKey(path[i], path[i + 1]), path[i], current, 0, recipient, payer, isLast);
         }
         amountOut = current;
         require(amountOut >= amountOutMin, "Router: slippage");
@@ -250,7 +255,8 @@ contract MayfieldRouter is IUnlockCallback {
                         amountIn: msg.value,
                         amountOutMin: amountOutMin,
                         recipient: recipient,
-                        payer: address(this)
+                        payer: address(this),
+                        applyFee: true
                     })
                 )
             )
@@ -277,7 +283,8 @@ contract MayfieldRouter is IUnlockCallback {
                         amountIn: amountIn,
                         amountOutMin: amountOutMin,
                         recipient: address(this),
-                        payer: msg.sender
+                        payer: msg.sender,
+                        applyFee: true
                     })
                 )
             )
@@ -467,18 +474,6 @@ contract MayfieldRouter is IUnlockCallback {
         (amount0, amount1) = abi.decode(result, (uint256, uint256));
     }
 
-    function quoteExactInput(address tokenIn, address tokenOut, uint256 amountIn)
-        external
-        view
-        returns (uint256)
-    {
-        // Placeholder for ABI stability — use Quoter.quoteExactInput via eth_call in production UIs.
-        tokenIn;
-        tokenOut;
-        amountIn;
-        revert("Router: use Quoter");
-    }
-
     function unlockCallback(bytes calldata data) external override returns (bytes memory) {
         require(msg.sender == address(poolManager), "Router: not manager");
         (Action action, bytes memory payload) = abi.decode(data, (Action, bytes));
@@ -497,6 +492,18 @@ contract MayfieldRouter is IUnlockCallback {
         address recipient,
         address payer
     ) internal returns (uint256 amountOut) {
+        return _unlockSwap(key, tokenIn, amountIn, amountOutMin, recipient, payer, true);
+    }
+
+    function _unlockSwap(
+        PoolKey memory key,
+        address tokenIn,
+        uint256 amountIn,
+        uint256 amountOutMin,
+        address recipient,
+        address payer,
+        bool applyFee
+    ) internal returns (uint256 amountOut) {
         bool zeroForOne = Currency.unwrap(key.currency0) == tokenIn;
         require(zeroForOne || Currency.unwrap(key.currency1) == tokenIn, "Router: token");
         bytes memory result = poolManager.unlock(
@@ -509,7 +516,8 @@ contract MayfieldRouter is IUnlockCallback {
                         amountIn: amountIn,
                         amountOutMin: amountOutMin,
                         recipient: recipient,
-                        payer: payer
+                        payer: payer,
+                        applyFee: applyFee
                     })
                 )
             )
@@ -562,9 +570,9 @@ contract MayfieldRouter is IUnlockCallback {
 
         uint256 grossOut = p.zeroForOne ? uint256(int256(delta.amount1)) : uint256(int256(delta.amount0));
 
-        // Deduct protocol fee from output before slippage check
+        // Deduct protocol fee from output before slippage check (skipped for intermediate hops).
         uint256 fee = 0;
-        if (protocolFeeBps > 0 && feeRecipient != address(0)) {
+        if (p.applyFee && protocolFeeBps > 0 && feeRecipient != address(0)) {
             fee = (grossOut * protocolFeeBps) / 10_000;
         }
         uint256 netOut = grossOut - fee;

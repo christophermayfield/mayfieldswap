@@ -124,37 +124,28 @@ describe("Gas Benchmarks", function () {
 
   // ─── 7. Collect fees ──────────────────────────────────────────────────────
   it("benchmark: collectFees", async function () {
-    // Do a swap to generate fees first
-    await router.swapExactTokensForTokens(
-      tokenA.target, tokenB.target,
-      ethers.parseEther("20"), 0,
-      owner.address, deadline()
-    );
-
-    // Add a little liquidity so position exists (full-range pool was seeded in #2)
-    const liq = await router.getLiquidity(tokenA.target, tokenB.target, owner.address);
-    if (liq === 0n) {
+    // Ensure LP position exists from benchmark #2 (full-range liquidity).
+    // Re-seed if the removeLiquidity benchmark cleared the position.
+    const liqCheck = await router.getLiquidity(tokenA.target, tokenB.target, owner.address);
+    if (liqCheck === 0n) {
       await router.addLiquidity(
         tokenA.target, tokenB.target,
-        ethers.parseEther("100"), ethers.parseEther("100"),
+        ethers.parseEther("500"), ethers.parseEther("500"),
         0, 0, owner.address, deadline()
-      );
-      // Swap again to generate fees
-      await router.swapExactTokensForTokens(
-        tokenA.target, tokenB.target,
-        ethers.parseEther("10"), 0,
-        owner.address, deadline()
       );
     }
 
-    try {
-      const tx = await router.collectFees(tokenA.target, tokenB.target, owner.address, deadline());
-      const receipt = await tx.wait();
-      console.log(`  collectFees:                  ${receipt.gasUsed} gas`);
-      expect(receipt.gasUsed).to.be.lt(500_000n);
-    } catch {
-      // collectFees reverts if no fees accrued yet — that's fine for this benchmark
-      console.log(`  collectFees: no fees accrued (position may need more swap volume)`);
+    // Do enough swap volume to accrue LP fees (0.30% fee on each swap).
+    for (let i = 0; i < 3; i++) {
+      await router.swapExactTokensForTokens(
+        tokenA.target, tokenB.target,
+        ethers.parseEther("100"), 0, owner.address, deadline()
+      );
     }
+
+    const tx = await router.collectFees(tokenA.target, tokenB.target, owner.address, deadline());
+    const receipt = await tx.wait();
+    console.log(`  collectFees:                  ${receipt.gasUsed} gas`);
+    expect(receipt.gasUsed).to.be.lt(500_000n);
   });
 });

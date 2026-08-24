@@ -60,84 +60,78 @@ describe("RangeOrderHook", function () {
     expect(await rangeHook.lastTick(poolId(key))).to.equal(0);
   });
 
-  it("allows placing a range order on one-sided liquidity", async function () {
+  it("placeOrder strictly requires range above current price (no touching)", async function () {
     const key = await hookedKey();
-    // Determine the natural "above price" direction based on which token is currency0.
-    // zeroForOne = selling currency0 → range above current price (tickLower >= currentTick)
-    // !zeroForOne = selling currency1 → range below current price (tickUpper <= currentTick)
-    // Start at tick=0 (SQRT_PRICE_1_1).  Use the zeroForOne direction (range above).
-    const zeroForOne = true; // always place above — we'll use the right token
+    // Tick is 0; tickLower must be > 0, not >= 0
+    await expect(
+      rangeHook.placeOrder(key, 0, 60, true) // tickLower == currentTick → should revert
+    ).to.be.revertedWith("RO: range must be above current price");
+  });
 
-    // For zeroForOne: range [60, 120] above tick=0; only currency0 needed
+  it("allows placing a zeroForOne range order strictly above current price", async function () {
+    const key = await hookedKey();
+    // zeroForOne=true: selling currency0 → range [60, 120] strictly above tick=0
     const [tL, tU] = [60, 120];
-    const currency0IsTokenA = key.currency0.toLowerCase() === tokenA.target.toLowerCase();
-    // amount0 = currency0; amount1 = currency1
-    const [a0, a1] = [ethers.parseEther("100"), 0n]; // only currency0 for above-price range
 
+    // Range above current price → only currency0 needed
     await router.connect(addr1).addLiquidityOnPool(
-      key, tL, tU, a0, a1, 0n, 0n, addr1.address, dl()
+      key, tL, tU,
+      ethers.parseEther("100"), 0n,
+      0n, 0n, addr1.address, dl()
     );
 
-    const tx      = await rangeHook.connect(addr1).placeOrder(key, tL, tU, zeroForOne);
+    const tx      = await rangeHook.connect(addr1).placeOrder(key, tL, tU, true);
     const receipt = await tx.wait();
     const event   = receipt.logs.find(l => l.fragment?.name === "OrderPlaced");
     expect(event).to.not.be.undefined;
 
-    const orderId = event.args.orderId;
-    const order   = await rangeHook.getOrder(orderId);
+    const order = await rangeHook.getOrder(event.args.orderId);
     expect(order.owner).to.equal(addr1.address);
     expect(order.filled).to.equal(false);
-
-    // eslint-disable-next-line no-unused-vars
-    const _unused = currency0IsTokenA; // suppress lint
   });
 
-  it("updates lastTick after a swap through the hooked pool", async function () {
+  it("updates lastTick after a !zeroForOne swap that pushes tick upward", async function () {
+    // Swap currency1 → currency0 (zeroForOne=false), which pushes tick UP.
+    // This is the direction that fills the [60, 120] zeroForOne=true order above.
     const key = await hookedKey();
     const id  = poolId(key);
-
     const tickBefore = await rangeHook.lastTick(id);
 
-    // Swap currency0 → currency1 (zeroForOne) to move price upward
-    const tokenIn = key.currency0; // always use currency0 as input for consistency
-    await router.swapExactInputOnPool(key, tokenIn, ethers.parseEther("100"), 0, owner.address, dl());
+    // Swap 500 currency1 → enough to push tick well past 120
+    await router.swapExactInputOnPool(
+      key, key.currency1, ethers.parseEther("500"), 0n, owner.address, dl()
+    );
 
     const tickAfter = await rangeHook.lastTick(id);
-    expect(tickAfter).to.not.equal(tickBefore);
+    // Tick moved upward (>0 and > tickBefore=0)
+    expect(tickAfter).to.be.gt(tickBefore);
+    expect(tickAfter).to.be.gt(0n);
   });
 
-  it("checkAndFill marks order as filled when range is fully crossed", async function () {
-    const key      = await hookedKey();
-    const zeroForOne = true; // matches placeOrder test above
-    const [tL, tU]   = [60, 120];
-    const orderId    = await rangeHook.computeOrderId(addr1.address, key, tL, tU, zeroForOne);
+  it("checkAndFill marks order filled after range is fully crossed", async function () {
+    const key     = await hookedKey();
+    const orderId = await rangeHook.computeOrderId(addr1.address, key, 60, 120, true);
 
-    const currentTick = Number(await rangeHook.lastTick(poolId(key)));
+    const currentTick = await rangeHook.lastTick(poolId(key));
+    // After the large !zeroForOne swap above, tick should be >= 120
+    expect(currentTick).to.be.gte(120n);
 
-    if ((zeroForOne && currentTick >= tU) || (!zeroForOne && currentTick <= tL)) {
-      // Range already crossed — mark as filled
-      await rangeHook.checkAndFill(orderId, key);
-      expect(await rangeHook.isOrderFilled(orderId)).to.equal(true);
-    } else {
-      // Need another large swap to cross the range
-      const tokenIn = key.currency0 < key.currency1 ? tokenA.target : tokenB.target;
-      await router.swapExactInputOnPool(key, tokenIn, ethers.parseEther("3000"), 0, owner.address, dl());
+    await rangeHook.checkAndFill(orderId, key);
+    expect(await rangeHook.isOrderFilled(orderId)).to.equal(true);
+  });
 
-      const tick = Number(await rangeHook.lastTick(poolId(key)));
-      if ((zeroForOne && tick >= tU) || (!zeroForOne && tick <= tL)) {
-        await rangeHook.checkAndFill(orderId, key);
-        expect(await rangeHook.isOrderFilled(orderId)).to.equal(true);
-      } else {
-        // Price didn't move enough — order still open (acceptable in test)
-        expect(await rangeHook.isOrderFilled(orderId)).to.equal(false);
-      }
-    }
+  it("reverts checkAndFill on an already-filled order", async function () {
+    const key     = await hookedKey();
+    const orderId = await rangeHook.computeOrderId(addr1.address, key, 60, 120, true);
+    await expect(
+      rangeHook.checkAndFill(orderId, key)
+    ).to.be.revertedWith("RO: already filled");
   });
 
   it("reverts placeOrder when range is wrong direction for zeroForOne", async function () {
     const key = await hookedKey();
-    // zeroForOne=true requires range entirely ABOVE current price (tickLower >= currentTick)
-    // Force a range that is below (negative ticks)
+    // Current tick is >120 after large swap; placing range [-240, -120] with zeroForOne=true
+    // requires tickLower(-240) > currentTick(>120) → false → reverts
     await expect(
       rangeHook.placeOrder(key, -240, -120, true)
     ).to.be.revertedWith("RO: range must be above current price");

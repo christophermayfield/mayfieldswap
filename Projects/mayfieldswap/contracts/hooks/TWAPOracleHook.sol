@@ -117,6 +117,10 @@ contract TWAPOracleHook is EmptyHooks {
 
     /// @dev Appends a new observation to the ring buffer.
     ///      Uses the PREVIOUS observation's tick for the elapsed-time weighting (V3-style accuracy).
+    /// @dev Max elapsed seconds used for cumulative weighting.
+    ///      Prevents int56 overflow: max_tick (887272) * MAX_ELAPSED (365 days) ≈ 2.8e13, well within int56.max (3.6e16).
+    int56 private constant MAX_ELAPSED = 365 days;
+
     function _write(PoolId id, int24 newTick) internal {
         uint8 prev = writeIndex[id];
         Observation storage last = _obs[id][prev];
@@ -125,7 +129,9 @@ contract TWAPOracleHook is EmptyHooks {
         int56 cumulative;
 
         if (last.initialized) {
-            int56 elapsed = int56(int32(ts - last.timestamp));
+            uint32 rawElapsed = ts - last.timestamp;
+            // Cap elapsed to prevent int56 overflow from long-dormant pools.
+            int56 elapsed = rawElapsed > 365 days ? MAX_ELAPSED : int56(uint56(rawElapsed));
             // Weight the period since the last observation with the tick that was active then.
             cumulative = last.tickCumulative + int56(last.tick) * elapsed;
         }

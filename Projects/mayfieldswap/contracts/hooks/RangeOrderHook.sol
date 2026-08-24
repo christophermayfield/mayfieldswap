@@ -119,9 +119,11 @@ contract RangeOrderHook is EmptyHooks {
         int24 current = lastTick[id];
 
         if (zeroForOne) {
-            require(tickLower >= current, "RO: range must be above current price");
+            // Range must be STRICTLY above current price so the order doesn't start filling immediately.
+            require(tickLower > current, "RO: range must be above current price");
         } else {
-            require(tickUpper <= current, "RO: range must be below current price");
+            // Range must be STRICTLY below current price.
+            require(tickUpper < current, "RO: range must be below current price");
         }
 
         orderId = keccak256(abi.encode(msg.sender, id, tickLower, tickUpper, zeroForOne));
